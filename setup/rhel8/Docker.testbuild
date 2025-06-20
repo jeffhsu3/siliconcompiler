@@ -2,16 +2,13 @@
 
 FROM rockylinux:8
 
-LABEL org.opencontainers.image.source "https://github.com/siliconcompiler/siliconcompiler"
-LABEL org.opencontainers.image.description "Base tool builder image for SiliconCompiler tools"
+LABEL org.opencontainers.image.source="https://github.com/siliconcompiler/siliconcompiler"
+LABEL org.opencontainers.image.description="Test tool build for SiliconCompiler tools"
 
 # Since scripts are written to run locally,
 # we need to install sudo
 RUN yum install -y sudo \
-                   curl wget \
-                   redhat-lsb-core \
-                   git \
-                   python3 python3-pip python3-devel
+                   python3 python3-pip
 RUN sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
 
 # Ensure PREFIX is captured by sudo for "sudo make install"
@@ -34,15 +31,12 @@ ENV C_INCLUDE_PATH="$SC_PREFIX/include"
 ENV CPLUS_INCLUDE_PATH="$SC_PREFIX/include"
 
 # Copy in support files
+COPY setup/build_tools.sh $SC_BUILD/
 COPY siliconcompiler/toolscripts/_tools.py $SC_BUILD/..
 COPY siliconcompiler/toolscripts/_tools.json $SC_BUILD/..
+COPY siliconcompiler/toolscripts/rhel8 $SC_BUILD
+
+WORKDIR $SC_BUILD
 
 ARG SC_INSTALL_SCRIPT
-# Copy and run install script
-# The final remove in the same RUN command
-# is important to keep the docker image size low
-COPY siliconcompiler/toolscripts/rhel8/${SC_INSTALL_SCRIPT} $SC_BUILD
-WORKDIR $SC_BUILD
-RUN chmod +x ./${SC_INSTALL_SCRIPT} && \
-    ./${SC_INSTALL_SCRIPT} && \
-    rm -rf $SC_BUILD/deps
+RUN bash build_tools.sh ${SC_INSTALL_SCRIPT}

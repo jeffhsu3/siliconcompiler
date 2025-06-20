@@ -45,6 +45,10 @@ def setup(chip):
     set_tool_task_var(chip, param_key='top_n_paths',
                       default_value='10',
                       schelp='number of paths to report timing for')
+    set_tool_task_var(chip, param_key='unique_path_groups_per_clock',
+                      default_value=False,
+                      skip=['pdk', 'lib'],
+                      schelp='true/false, if true will generate separate path groups per clock')
 
     modes = get_timing_modes(chip)
 
@@ -65,6 +69,17 @@ def setup(chip):
         if chip.get('constraint', 'timing', scenario, 'file', step=step, index=index):
             chip.add('tool', tool, 'task', task, 'require', f'constraint,timing,{scenario},file',
                      step=step, index=index)
+
+    # Add the SPEF or SDF files as inputs if provided.
+    spef_files = [f for f in input_provides(chip, step, index) if f.endswith(".spef")]
+    sdf_files = [f for f in input_provides(chip, step, index) if f.endswith(".sdf")]
+    if spef_files and sdf_files:
+        # If both SPEF and SDF files are provided, only use the SPEF files.
+        chip.add('tool', tool, 'task', task, 'input', spef_files, step=step, index=index)
+    elif spef_files:
+        chip.add('tool', tool, 'task', task, 'input', spef_files, step=step, index=index)
+    elif sdf_files:
+        chip.add('tool', tool, 'task', task, 'input', sdf_files, step=step, index=index)
 
     add_common_file(chip, 'opensta_generic_sdc', 'sdc/sc_constraints.sdc')
 
@@ -165,13 +180,13 @@ def post_process(chip):
                     metric = None
                 elif metric in ('holdslack', 'setupslack'):
                     if slack:
-                        record_metric(chip, step, index, metric, float(slack.group(1)),
+                        record_metric(chip, step, index, metric, float(slack.group(1).split()[-1]),
                                       __report_map(chip, metric, logfile),
                                       source_unit=timescale)
                         metric = None
                 elif metric in ('setuptns', 'holdtns'):
                     if tns:
-                        record_metric(chip, step, index, metric, float(tns.group(1)),
+                        record_metric(chip, step, index, metric, float(tns.group(1).split()[-1]),
                                       __report_map(chip, metric, logfile),
                                       source_unit=timescale)
                         metric = None

@@ -8,21 +8,29 @@ from siliconcompiler.targets import freepdk45_demo, asic_demo
 def test_hash_files():
     chip = siliconcompiler.Chip('top')
 
-    chip.use(freepdk45_demo)
-    chip.write_manifest("raw.json")
+    for n in range(5):
+        with open(f"test{n}.txt", "w") as f:
+            f.write(f"test{n}")
+        chip.set('option', 'file', f'f{n}', f"test{n}.txt")
+
+    hash_count = 0
     allkeys = chip.allkeys()
     for keypath in allkeys:
         if 'default' in keypath:
             continue
         sc_type = chip.get(*keypath, field='type')
         if 'file' in sc_type:
-            for vals, step, index in chip.schema._getvals(*keypath):
+            for vals, step, index in chip.schema.get(*keypath, field=None).getvalues():
                 hashes = chip.hash_files(*keypath, step=step, index=index)
                 schema_hashes = chip.schema.get(*keypath, step=step, index=index, field='filehash')
+                if isinstance(hashes, list) and not hashes and schema_hashes is None:
+                    hashes = None
                 assert hashes == schema_hashes
+                if hashes:
+                    hash_count += 1
                 if sc_type.startswith('['):
                     assert len(hashes) == len(vals)
-    chip.write_manifest("hashed.json")
+    assert hash_count == 5
 
 
 def test_err_mismatch():
@@ -224,8 +232,8 @@ def test_hash_node_file():
     assert chip.get('input', 'rtl', 'verilog', field='filehash') == []
 
 
-@pytest.mark.quick
 @pytest.mark.eda
+@pytest.mark.quick
 @pytest.mark.timeout(300)
 def test_error_in_run_while_hashing(gcd_chip):
     # Set a value that will cause place to break
@@ -235,7 +243,7 @@ def test_error_in_run_while_hashing(gcd_chip):
     gcd_chip.set('option', 'to', 'place.repair_design')
     gcd_chip.set('option', 'hash', True)
 
-    with pytest.raises(siliconcompiler.SiliconCompilerError):
+    with pytest.raises(RuntimeError):
         gcd_chip.run(raise_exception=True)
 
     schema = siliconcompiler.Schema(
@@ -248,7 +256,9 @@ def test_error_in_run_while_hashing(gcd_chip):
         manifest=os.path.join(gcd_chip.getworkdir(step='place.global', index='0'),
                               'outputs', f'{gcd_chip.design}.pkg.json'))
     assert len(schema.get('tool', 'openroad', 'task', 'global_placement', 'output',
-                          field='filehash', step='place.global', index='0')) == 0
+                          field='filehash', step='place.global', index='0')) == 4
+    assert schema.get('tool', 'openroad', 'task', 'global_placement', 'output',
+                      field='filehash', step='place.global', index='0') == [None, None, None, None]
 
 
 @pytest.mark.eda
@@ -261,8 +271,8 @@ def test_rerunning_with_hashing():
     chip.set('option', 'hash', True)
     chip.set('option', 'to', 'floorplan.init')
 
-    assert chip.run()
-    assert chip.run()
+    chip.run(raise_exception=True)
+    chip.run(raise_exception=True)
 
 
 def test_hash_no_cache():
@@ -285,8 +295,3 @@ def test_hash_no_cache():
     assert hashes[os.path.abspath('foo.txt')] == 'h'
     assert chip.hash_files('input', 'rtl', 'verilog', check=False, allow_cache=True,
                            step='test', index=0) == ['h']
-
-
-#########################
-if __name__ == "__main__":
-    test_changed_algorithm('md5')

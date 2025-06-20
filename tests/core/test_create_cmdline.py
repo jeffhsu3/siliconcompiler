@@ -2,7 +2,7 @@ import re
 import pytest
 
 import siliconcompiler
-from siliconcompiler.schema.utils import PerNode
+from siliconcompiler.schema import PerNode
 
 
 @pytest.fixture
@@ -145,27 +145,6 @@ def test_pernode_optional(do_cli_test):
     assert chip.get('asic', 'logiclib', step='syn', index=1) == ['"syn1" lib']
 
 
-def _cast(val, sctype):
-    if sctype.startswith('['):
-        # TODO: doesn't handle examples w/ multiple list items (we do not have
-        # currently)
-        subtype = sctype.strip('[]')
-        return [_cast(val.strip('[]'), subtype)]
-    elif sctype.startswith('('):
-        vals = val.strip('()').split(',')
-        subtypes = sctype.strip('()').split(',')
-        return tuple(_cast(v.strip(), subtype.strip()) for v, subtype in zip(vals, subtypes))
-    elif sctype == 'float':
-        return float(val)
-    elif sctype == 'int':
-        return int(val)
-    elif sctype == 'bool':
-        return bool(val)
-    else:
-        # everything else (str, file, dir) is treated like a string
-        return val.strip('"')
-
-
 def test_additional_parameters(do_cli_test):
     args = ['sc',
             '-input', 'rtl verilog examples/ibex/ibex_alu.v',
@@ -228,7 +207,7 @@ def test_additional_parameters_not_used(do_cli_test):
     assert chip.get('option', 'pdk') == 'freepdk45'
 
 
-def test_cli_examples(do_cli_test, monkeypatch):
+def test_cli_examples(do_cli_test, monkeypatch, cast):
     # Need to mock this function, since our cfg CLI example will try to call it
     # on a fake manifest.
     def _mock_read_manifest(chip, manifest, **kwargs):
@@ -236,7 +215,6 @@ def test_cli_examples(do_cli_test, monkeypatch):
         pass
     monkeypatch.setattr(siliconcompiler.Schema, 'read_manifest', _mock_read_manifest)
 
-    Debug = False
     did_something = True
     example_index = 0
     while (did_something):
@@ -245,9 +223,7 @@ def test_cli_examples(do_cli_test, monkeypatch):
         chip = siliconcompiler.Chip('test')
         chip.remove('package', 'source', 'siliconcompiler')
         expected_data = []
-        for keypath in chip.allkeys():
-            if Debug:
-                print(keypath)
+        for keypath in sorted(chip.allkeys()):
             examples = chip.get(*keypath, field='example')
             examples = [e for e in examples if e.startswith('cli')]
             if len(examples) <= example_index:
@@ -292,7 +268,7 @@ def test_cli_examples(do_cli_test, monkeypatch):
                 args.append(value)
 
             if expected_val:
-                expected = (replaced_keypath, step, index, _cast(expected_val, typestr))
+                expected = (replaced_keypath, step, index, cast(expected_val, typestr))
             else:
                 assert typestr == 'bool', 'Implicit value only allowed for boolean'
                 expected = (replaced_keypath, step, index, True)
@@ -302,8 +278,17 @@ def test_cli_examples(do_cli_test, monkeypatch):
         c = do_cli_test(args)
 
         for kp, step, index, val in expected_data:
+            if step:
+                step = step.strip("\"").strip("'")
+            if index:
+                index = index.strip("\"").strip("'")
             print("Check", kp, c.schema.get(*kp, step=step, index=index), val)
-            assert c.schema.get(*kp, step=step, index=index) == val
+            new_val = c.schema.get(*kp, step=step, index=index)
+            if isinstance(new_val, list):
+                new_val = [v if not isinstance(v, str) else v.strip("\"'") for v in new_val]
+            if isinstance(new_val, str):
+                new_val = new_val.strip("\"'")
+            assert new_val == val
 
         example_index += 1
 

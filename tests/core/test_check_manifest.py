@@ -1,8 +1,9 @@
 # Copyright 2020 Silicon Compiler Authors. All Rights Reserved.
 import siliconcompiler
-from siliconcompiler.scheduler import _setup_node
+from siliconcompiler.scheduler.schedulernode import SchedulerNode
 
 import os
+import shutil
 
 import pytest
 
@@ -12,8 +13,6 @@ from core.tools.fake import baz
 from core.tools.echo import echo
 
 from siliconcompiler.tools.builtin import nop
-from siliconcompiler.flowgraph import _check_flowgraph, \
-    _get_flowgraph_execution_order
 from siliconcompiler.targets import freepdk45_demo, gf180_demo
 
 
@@ -23,9 +22,10 @@ def test_check_manifest():
     chip.input('examples/gcd/gcd.v')
     chip.set('option', 'to', ['syn'])
 
-    for layer_nodes in _get_flowgraph_execution_order(chip, 'asicflow'):
+    for layer_nodes in chip.schema.get(
+            "flowgraph", "asicflow", field="schema").get_execution_order():
         for step, index in layer_nodes:
-            _setup_node(chip, step, index)
+            SchedulerNode(chip, step, index).setup()
 
     chip.set('arg', 'step', None)
     chip.set('arg', 'index', None)
@@ -40,9 +40,10 @@ def test_check_allowed_filepaths_pass(scroot):
     chip.input(os.path.join(scroot, 'examples', 'gcd', 'gcd.v'))
     chip.use(freepdk45_demo)
 
-    for layer_nodes in _get_flowgraph_execution_order(chip, 'asicflow'):
+    for layer_nodes in chip.schema.get(
+            "flowgraph", "asicflow", field="schema").get_execution_order():
         for step, index in layer_nodes:
-            _setup_node(chip, step, index)
+            SchedulerNode(chip, step, index).setup()
 
     # collect input files
     cwd = os.getcwd()
@@ -72,27 +73,6 @@ def test_check_allowed_filepaths_fail(scroot):
     os.chdir(workdir)
     chip.collect()
     os.chdir(cwd)
-
-    assert not chip.check_manifest()
-
-
-def test_check_missing_file_param():
-    chip = siliconcompiler.Chip('gcd')
-    chip.use(freepdk45_demo)
-
-    _setup_node(chip, 'syn', '0')
-
-    chip.set('arg', 'step', 'syn')
-    chip.set('arg', 'index', '0')
-
-    chip.set('tool', 'yosys', 'task', 'syn_asic', 'input', [], step='syn', index='0')
-    chip.set('tool', 'yosys', 'task', 'syn_asic', 'output', [], step='syn', index='0')
-
-    # not real file, will cause error
-    libname = 'nangate45'
-    corner = 'typical'
-    chip.add('library', libname, 'output', corner, 'nldm',
-             '/fake/timing/file.lib')
 
     assert not chip.check_manifest()
 
@@ -133,6 +113,9 @@ def test_merged_graph_good(merge_flow_chip):
 
 
 def test_merged_graph_good_from_to():
+    if not shutil.which("echo"):
+        pytest.skip(reason="echo not found")
+
     chip = siliconcompiler.Chip('test')
     flow = 'test'
     chip.node(flow, 'import', nop)
@@ -147,7 +130,7 @@ def test_merged_graph_good_from_to():
     chip.edge(flow, 'merge', 'export')
     chip.set('option', 'flow', flow)
 
-    assert chip.run()
+    chip.run(raise_exception=True)
 
     chip.set('option', 'from', ['merge'])
     chip.set('option', 'to', ['export'])
@@ -184,27 +167,6 @@ def test_check_missing_task_module():
     assert not chip.check_manifest()
 
 
-def test_check_graph_duplicate_edge():
-    chip = siliconcompiler.Chip('test')
-
-    flow = 'test'
-    chip.set('option', 'flow', flow)
-
-    chip.node(flow, 'import', foo)
-    chip.node(flow, 'export', baz)
-
-    chip.edge(flow, 'import', 'export')
-
-    # edge() should not allow duplicates
-    chip.edge(flow, 'import', 'export')
-    assert len(chip.get('flowgraph', flow, 'export', '0', 'input')) == 1
-
-    # check_manifest() should catch it if forced
-    chip.add('flowgraph', flow, 'export', '0', 'input', ('import', '0'))
-
-    assert not _check_flowgraph(chip)
-
-
 def test_check_missing_library():
     chip = siliconcompiler.Chip('test')
     chip.use(gf180_demo)
@@ -212,14 +174,9 @@ def test_check_missing_library():
 
     chip.add('option', 'library', 'sc_test')
 
-    for layer_nodes in _get_flowgraph_execution_order(chip, 'asicflow'):
+    for layer_nodes in chip.schema.get(
+            "flowgraph", "asicflow", field="schema").get_execution_order():
         for step, index in layer_nodes:
-            _setup_node(chip, step, index)
+            SchedulerNode(chip, step, index).setup()
 
     assert not chip.check_manifest()
-
-
-#########################
-if __name__ == "__main__":
-    test_check_manifest()
-    test_check_missing_file_param()

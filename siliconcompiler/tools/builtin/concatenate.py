@@ -3,8 +3,7 @@ import os
 from siliconcompiler import sc_open, SiliconCompilerError
 from siliconcompiler import utils
 from siliconcompiler.tools._common import input_provides, input_file_node_name, get_tool_task
-from siliconcompiler import flowgraph
-from siliconcompiler import scheduler
+from siliconcompiler.scheduler.schedulernode import SchedulerNode
 
 
 def make_docs(chip):
@@ -12,8 +11,8 @@ def make_docs(chip):
     _make_docs(chip)
     chip.set('option', 'flow', 'asicflow')
 
-    for step, index in flowgraph._get_flowgraph_entry_nodes(chip, 'asicflow'):
-        scheduler._setup_node(chip, step, index)
+    for step, index in chip.schema.get("flowgraph", "asicflow", field="schema").get_entry_nodes():
+        SchedulerNode(chip, step, index).setup()
 
     chip.set('arg', 'step', 'import.combine')
     chip.set('arg', 'index', '0')
@@ -63,7 +62,12 @@ def _gather_outputs(chip, step, index):
     flow = chip.get('option', 'flow')
 
     in_nodes = chip.get('flowgraph', flow, step, index, 'input')
-    in_task_outputs = [flowgraph._gather_outputs(chip, *node) for node in in_nodes]
+    in_task_outputs = []
+    for in_step, in_index in in_nodes:
+        in_tool, _ = get_tool_task(chip, in_step, in_index, flow=flow)
+        task_class = chip.get("tool", in_tool, field="schema")
+        task_class.set_runtime(chip, step=in_step, index=in_index)
+        in_task_outputs.append(task_class.get_output_files())
 
     if len(in_task_outputs) > 0:
         return in_task_outputs[0].union(*in_task_outputs[1:])

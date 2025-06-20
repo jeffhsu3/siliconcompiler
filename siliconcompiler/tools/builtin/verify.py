@@ -1,8 +1,8 @@
 from siliconcompiler.tools.builtin import _common
-from siliconcompiler.schema import Schema
-from siliconcompiler.scheduler import _haltstep
+from siliconcompiler.schema.parametertype import NodeType
 from siliconcompiler.tools.builtin.builtin import set_io_files
-from siliconcompiler import utils, flowgraph, SiliconCompilerError
+from siliconcompiler import utils, SiliconCompilerError
+from siliconcompiler.tools._common import get_tool_task
 
 import re
 
@@ -52,13 +52,13 @@ def _select_inputs(chip, step, index):
             raise SiliconCompilerError(
                 f"Missing metric for {metric} in {inputs[0]}{inputs[1]}", chip=chip)
 
-        metric_type = chip.get('metric', metric, field='type')
-        goal = Schema._normalize_value(goal, metric_type, "", None)
+        metric_type = chip.get('metric', metric, field=None)
+        goal = NodeType.normalize(goal, metric_type.get(field='type'))
         if not utils.safecompare(chip, value, op, goal):
             chip.error(f"{step}{index} fails '{metric}' metric: {value}{op}{goal}")
 
     if not passes:
-        _haltstep(chip, flow, step, index)
+        return []
 
     return inputs
 
@@ -67,7 +67,12 @@ def _gather_outputs(chip, step, index):
     flow = chip.get('option', 'flow')
 
     in_nodes = chip.get('flowgraph', flow, step, index, 'input')
-    in_task_outputs = [flowgraph._gather_outputs(chip, *node) for node in in_nodes]
+    in_task_outputs = []
+    for in_step, in_index in in_nodes:
+        in_tool, _ = get_tool_task(chip, in_step, in_index, flow=flow)
+        task_class = chip.get("tool", in_tool, field="schema")
+        task_class.set_runtime(chip, step=in_step, index=in_index)
+        in_task_outputs.append(task_class.get_output_files())
 
     if len(in_task_outputs) > 0:
         return in_task_outputs[0].intersection(*in_task_outputs[1:])

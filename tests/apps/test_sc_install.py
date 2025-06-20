@@ -2,7 +2,21 @@ import pytest
 import os
 import sys
 from unittest import mock
+from pathlib import Path
 from siliconcompiler.apps import sc_install
+from siliconcompiler import RecordSchema
+from siliconcompiler.apps.sc_install import os as os_imported
+
+
+@pytest.fixture(autouse=True)
+def install_mock_home(monkeypatch):
+    test_dir = os.getcwd()
+
+    def _mock_home():
+        return Path(test_dir)
+
+    monkeypatch.setattr(Path, 'home', _mock_home)
+    monkeypatch.setenv("HOME", test_dir)
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="only works on linux")
@@ -89,7 +103,6 @@ def test_install_group(call, monkeypatch):
             "yosys": "yosys.sh",
             "openroad": "openroad.sh",
             "sv2v": "sv2v.sh",
-            "surelog": "surelog.sh",
             "klayout": "klayout.sh"
         }
     monkeypatch.setattr(sc_install, '_get_tools_list', return_os)
@@ -98,7 +111,7 @@ def test_install_group(call, monkeypatch):
 
     monkeypatch.setattr('sys.argv', ['sc-install', '-group', 'asic'])
     assert sc_install.main() == 0
-    assert call.call_count == 5
+    assert call.call_count == 4
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="only works on linux")
@@ -109,7 +122,6 @@ def test_install_groups(call, monkeypatch):
             "yosys": "yosys.sh",
             "openroad": "openroad.sh",
             "sv2v": "sv2v.sh",
-            "surelog": "surelog.sh",
             "klayout": "klayout.sh",
             "vpr": "vpr.sh"
         }
@@ -119,7 +131,7 @@ def test_install_groups(call, monkeypatch):
 
     monkeypatch.setattr('sys.argv', ['sc-install', '-group', 'asic', 'fpga'])
     assert sc_install.main() == 0
-    assert call.call_count == 6
+    assert call.call_count == 5
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="only works on linux")
@@ -220,7 +232,53 @@ def test_prefix_script(monkeypatch, datadir, capfd):
     monkeypatch.setattr('sys.argv', ['sc-install', 'echo', '-prefix', prefix_path])
     assert sc_install.main() == 0
 
-    assert f"ECHO prefix: {prefix_path}" in capfd.readouterr().out
+    output = capfd.readouterr().out
+    assert f"ECHO prefix: {prefix_path}" in output
+    assert "USE_SUDO_INSTALL: no" in output
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="only works on linux")
+def test_prefix_script_use_sudo_access(monkeypatch, datadir, capfd):
+    def return_os():
+        return {
+            "echo": os.path.join(datadir, "echo_prefix.sh")
+        }
+    monkeypatch.setattr(sc_install, '_get_tools_list', return_os)
+
+    def dummmy_access(*args):
+        return False
+    monkeypatch.setattr(os_imported, "access", dummmy_access)
+
+    prefix_path = os.path.abspath('testing123')
+
+    monkeypatch.setattr('sys.argv', ['sc-install', 'echo', '-prefix', prefix_path])
+    assert sc_install.main() == 0
+
+    output = capfd.readouterr().out
+    assert f"ECHO prefix: {prefix_path}" in output
+    assert "USE_SUDO_INSTALL: yes" in output
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="only works on linux")
+def test_prefix_script_use_sudo_makedirs(monkeypatch, datadir, capfd):
+    def return_os():
+        return {
+            "echo": os.path.join(datadir, "echo_prefix.sh")
+        }
+    monkeypatch.setattr(sc_install, '_get_tools_list', return_os)
+
+    def dummmy_makedirs(*args, **kwargs):
+        raise PermissionError
+    monkeypatch.setattr(os_imported, "makedirs", dummmy_makedirs)
+
+    prefix_path = os.path.abspath('testing123')
+
+    monkeypatch.setattr('sys.argv', ['sc-install', 'echo', '-prefix', prefix_path])
+    assert sc_install.main() == 0
+
+    output = capfd.readouterr().out
+    assert f"ECHO prefix: {prefix_path}" in output
+    assert "USE_SUDO_INSTALL: yes" in output
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="only works on linux")
@@ -274,7 +332,7 @@ def test_debug_machine_supported(monkeypatch, capsys):
             "distro": "ubuntu",
             "osversion": "24.04"
         }
-    monkeypatch.setattr(sc_install, '_get_machine_info', os_info)
+    monkeypatch.setattr(RecordSchema, "get_machine_information", os_info)
     monkeypatch.setattr('sys.argv', ['sc-install', '-debug_machine'])
 
     assert sc_install.main() == 0
@@ -294,7 +352,7 @@ def test_debug_machine_remapped(monkeypatch, capsys):
             "distro": "rocky",
             "osversion": "8.10"
         }
-    monkeypatch.setattr(sc_install, '_get_machine_info', os_info)
+    monkeypatch.setattr(RecordSchema, "get_machine_information", os_info)
     monkeypatch.setattr('sys.argv', ['sc-install', '-debug_machine'])
 
     assert sc_install.main() == 0
@@ -318,7 +376,7 @@ def test_debug_machine_unsupported(monkeypatch, capsys, sys, dist, ver):
             "distro": dist,
             "osversion": ver
         }
-    monkeypatch.setattr(sc_install, '_get_machine_info', os_info)
+    monkeypatch.setattr(RecordSchema, "get_machine_information", os_info)
     monkeypatch.setattr('sys.argv', ['sc-install', '-debug_machine'])
 
     assert sc_install.main() == 1
@@ -343,7 +401,7 @@ def test_debug_machine_unsupported_install(monkeypatch, capsys, sys, dist, ver):
             "distro": dist,
             "osversion": ver
         }
-    monkeypatch.setattr(sc_install, '_get_machine_info', os_info)
+    monkeypatch.setattr(RecordSchema, "get_machine_information", os_info)
     monkeypatch.setattr('sys.argv', ['sc-install', 'yosys'])
 
     assert sc_install.main() == 1
@@ -362,8 +420,8 @@ def test_groups(monkeypatch):
         return "<os>"
     monkeypatch.setattr(sc_install, '_get_os_name', os_info_name)
 
-    tools_asic = ("surelog", "sv2v", "yosys", "openroad", "klayout")
-    tools_fpga = ("surelog", "sv2v", "yosys", "vpr")
+    tools_asic = ("sv2v", "yosys", "openroad", "klayout")
+    tools_fpga = ("sv2v", "yosys", "vpr")
 
     recommend = sc_install._recommended_tool_groups(tools_asic)
     assert 'asic' in recommend
@@ -389,11 +447,9 @@ def test_groups(monkeypatch):
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="only works on linux")
-def test_show(monkeypatch, capsys):
+def test_show(monkeypatch, capsys, scroot):
     file_path = os.path.join(
-        os.path.dirname(__file__),
-        '..',
-        '..',
+        scroot,
         'siliconcompiler',
         'toolscripts',
         'ubuntu22',

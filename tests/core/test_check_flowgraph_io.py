@@ -1,5 +1,6 @@
 import siliconcompiler
-from siliconcompiler.scheduler import _setup_node
+
+from siliconcompiler.scheduler.schedulernode import SchedulerNode
 
 from siliconcompiler.tools.surelog import parse
 from siliconcompiler.tools.yosys import syn_asic
@@ -8,11 +9,11 @@ from core.tools.fake import fake_in
 
 from siliconcompiler.tools.builtin import join
 from siliconcompiler.tools.builtin import minimum
-from siliconcompiler.flowgraph import _check_flowgraph_io
+from siliconcompiler.utils.flowgraph import _check_flowgraph_io
 from siliconcompiler.targets import freepdk45_demo
 
 
-def test_check_flowgraph():
+def test_check_flowgraph_io():
     chip = siliconcompiler.Chip('foo')
     chip.use(freepdk45_demo)
     chip.input('foo.v')
@@ -23,13 +24,13 @@ def test_check_flowgraph():
     chip.node(flow, 'syn', syn_asic)
     chip.edge(flow, 'import', 'syn')
 
-    _setup_node(chip, 'import', '0')
-    _setup_node(chip, 'syn', '0')
+    SchedulerNode(chip, "import", "0").setup()
+    SchedulerNode(chip, "syn", "0").setup()
 
     assert _check_flowgraph_io(chip)
 
 
-def test_check_flowgraph_join():
+def test_check_flowgraph_io_join():
 
     chip = siliconcompiler.Chip('foo')
 
@@ -51,7 +52,7 @@ def test_check_flowgraph_join():
     assert _check_flowgraph_io(chip)
 
 
-def test_check_flowgraph_min():
+def test_check_flowgraph_io_min():
 
     chip = siliconcompiler.Chip('foo')
 
@@ -76,7 +77,7 @@ def test_check_flowgraph_min():
     assert _check_flowgraph_io(chip)
 
 
-def test_check_flowgraph_min_fail():
+def test_check_flowgraph_io_min_fail():
 
     chip = siliconcompiler.Chip('foo')
 
@@ -98,7 +99,7 @@ def test_check_flowgraph_min_fail():
     assert not _check_flowgraph_io(chip)
 
 
-def test_check_flowgraph_disallow_multiple():
+def test_check_flowgraph_io_disallow_multiple():
 
     chip = siliconcompiler.Chip('foo')
 
@@ -118,7 +119,7 @@ def test_check_flowgraph_disallow_multiple():
     assert not _check_flowgraph_io(chip)
 
 
-def test_check_flowgraph_allow_multiple():
+def test_check_flowgraph_io_allow_multiple():
 
     chip = siliconcompiler.Chip('foo')
 

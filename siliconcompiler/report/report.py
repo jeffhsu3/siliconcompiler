@@ -1,11 +1,10 @@
 import fnmatch
-import pandas
 import os
 from siliconcompiler import Schema
-from siliconcompiler.schema.utils import PerNode
+from siliconcompiler.schema import PerNode
 from siliconcompiler.report import utils
-from siliconcompiler.flowgraph import nodes_to_execute
 from siliconcompiler.tools._common import get_tool_task
+from siliconcompiler.flowgraph import RuntimeFlowgraph
 
 
 def make_metric_dataframe(chip):
@@ -22,10 +21,12 @@ def make_metric_dataframe(chip):
         >>> make_metric_dataframe(chip)
         Returns pandas dataframe of tracked metrics.
     '''
+    from pandas import DataFrame
+
     nodes, errors, metrics, metrics_unit, metrics_to_show, reports = utils._collect_data(chip)
     # converts from 2d dictionary to pandas DataFrame, transposes so
     # orientation is correct, and filters based on the metrics we track
-    data = (pandas.DataFrame.from_dict(metrics, orient='index').transpose())
+    data = (DataFrame.from_dict(metrics, orient='index').transpose())
     data = data.loc[metrics_to_show]
     # include metrics_unit
     data.index = data.index.map(lambda x: (x, metrics_unit[x]))
@@ -106,6 +107,11 @@ def make_manifest_helper(manifest_subsect, modified_manifest_subsect):
         'default' nodes.
     '''
 
+    def _is_leaf(cfg):
+        # 'shorthelp' chosen arbitrarily: any mandatory field with a consistent
+        # type would work.
+        return 'shorthelp' in cfg and isinstance(cfg['shorthelp'], str)
+
     def build_leaf(manifest_subsect):
         if PerNode(manifest_subsect['pernode']) == PerNode.NEVER:
             if Schema.GLOBAL_KEY in manifest_subsect['node'] and \
@@ -132,7 +138,7 @@ def make_manifest_helper(manifest_subsect, modified_manifest_subsect):
                             node_values[step + index] = value
             return node_values
 
-    if Schema._is_leaf(manifest_subsect):
+    if _is_leaf(manifest_subsect):
         if PerNode(manifest_subsect['pernode']) == PerNode.NEVER:
             if Schema.GLOBAL_KEY in manifest_subsect['node']:
                 value = manifest_subsect['node'][Schema.GLOBAL_KEY][Schema.GLOBAL_KEY]['value']
@@ -157,7 +163,7 @@ def make_manifest_helper(manifest_subsect, modified_manifest_subsect):
 
     for key, key_dict in manifest_subsect.items():
         if key != 'default':
-            if Schema._is_leaf(key_dict):
+            if _is_leaf(key_dict):
                 modified_manifest_subsect[key] = build_leaf(key_dict)
             else:
                 modified_manifest_subsect[key] = {}
@@ -175,7 +181,7 @@ def make_manifest(chip):
         >>> make_manifest(chip)
         Returns tree/json of manifest.
     '''
-    manifest = chip.schema.cfg
+    manifest = chip.schema.getdict()
     modified_manifest = {}
     make_manifest_helper(manifest, modified_manifest)
     return modified_manifest
@@ -193,7 +199,12 @@ def get_flowgraph_path(chip):
         Returns the "winning" path for that job.
     '''
     flow = chip.get('option', 'flow')
-    return utils._get_flowgraph_path(chip, flow, nodes_to_execute(chip))
+    runtime = RuntimeFlowgraph(
+        chip.schema.get("flowgraph", flow, field='schema'),
+        from_steps=chip.get('option', 'from'),
+        to_steps=chip.get('option', 'to'),
+        prune_nodes=chip.get('option', 'prune'))
+    return utils._get_flowgraph_path(chip, flow, runtime.get_nodes())
 
 
 def search_manifest_keys(manifest, key):
@@ -283,9 +294,9 @@ def get_total_manifest_key_count(manifest):
         acc (int) : An accumulator of the current number of folders and files.
     '''
     acc = len(manifest)
-    for dictKeys in manifest:
-        if isinstance(manifest[dictKeys], dict):
-            acc += get_total_manifest_key_count(manifest[dictKeys])
+    for key in manifest:
+        if isinstance(manifest[key], dict):
+            acc += get_total_manifest_key_count(manifest[key])
     return acc
 
 
@@ -302,20 +313,20 @@ def get_metrics_source(chip, step, index):
         index (string) : Index of node.
     '''
     file_to_metric = {}
+    metric_primary_source = {}
     tool, task = get_tool_task(chip, step, index)
     if not chip.valid('tool', tool, 'task', task, 'report'):
-        return file_to_metric
+        return metric_primary_source, file_to_metric
 
     metrics = chip.getkeys('tool', tool, 'task', task, 'report')
 
     for metric in metrics:
         sources = chip.get('tool', tool, 'task', task, 'report', metric, step=step, index=index)
+        if sources:
+            metric_primary_source.setdefault(sources[0], []).append(metric)
         for source in sources:
-            if source in file_to_metric:
-                file_to_metric[source].append(metric)
-            else:
-                file_to_metric[source] = [metric]
-    return file_to_metric
+            file_to_metric.setdefault(source, []).append(metric)
+    return metric_primary_source, file_to_metric
 
 
 def get_files(chip, step, index):

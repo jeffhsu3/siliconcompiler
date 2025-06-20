@@ -4,9 +4,10 @@ import argparse
 import os
 import sys
 import tarfile
+import os.path
+
 from siliconcompiler import Chip, Schema
-from siliconcompiler.package import path as sc_path
-from siliconcompiler.scheduler import _runtask, _executenode
+from siliconcompiler.scheduler.schedulernode import SchedulerNode
 from siliconcompiler import __version__
 
 
@@ -38,7 +39,6 @@ def main():
                                         field='shorthelp'))
     parser.add_argument('-cachedir',
                         metavar='<directory>',
-                        required=True,
                         help=schema.get('option', 'cachedir',
                                         field='shorthelp'))
     parser.add_argument('-cachemap',
@@ -69,12 +69,15 @@ def main():
     parser.add_argument('-unset_scheduler',
                         action='store_true',
                         help='Unset scheduler to ensure local run')
+    parser.add_argument('-replay',
+                        action='store_true',
+                        help='Running as replay')
     args = parser.parse_args()
 
     # Change to working directory to allow rel path to be build dir
     # this avoids needing to deal with the job hash on the client
     # side
-    os.chdir(args.cwd)
+    os.chdir(os.path.abspath(args.cwd))
 
     # Create the Chip object.
     chip = Chip('<design>')
@@ -83,38 +86,40 @@ def main():
     # setup work directory
     chip.set('arg', 'step', args.step)
     chip.set('arg', 'index', args.index)
-    chip.set('option', 'builddir', args.builddir)
-    chip.set('option', 'cachedir', args.cachedir)
+    chip.set('option', 'builddir', os.path.abspath(args.builddir))
+
+    if args.cachedir:
+        chip.set('option', 'cachedir', os.path.abspath(args.cachedir))
 
     if args.remoteid:
         chip.set('record', 'remoteid', args.remoteid)
 
     if args.unset_scheduler:
-        for vals, step, index in chip.schema._getvals('option', 'scheduler', 'name'):
+        for vals, step, index in chip.schema.get('option', 'scheduler', 'name',
+                                                 field=None).getvalues():
             chip.unset('option', 'scheduler', 'name', step=step, index=index)
 
     # Init logger to ensure consistent view
-    chip._init_logger(step=chip.get('arg', 'step'),
-                      index=chip.get('arg', 'index'),
+    chip._init_logger(step=args.step,
+                      index=args.index,
                       in_run=True)
 
     if args.cachemap:
         for cachepair in args.cachemap:
             package, path = cachepair.split(':')
-            chip._packages[package] = path
+            chip.get("package", field="schema")._set_cache(package, path)
 
     # Populate cache
-    for package in chip.getkeys('package', 'source'):
-        sc_path(chip, package)
+    for resolver in chip.get('package', field='schema').get_resolvers().values():
+        resolver()
 
     # Run the task.
     error = True
     try:
-        _runtask(chip,
-                 chip.get('option', 'flow'),
-                 chip.get('arg', 'step'),
-                 chip.get('arg', 'index'),
-                 _executenode)
+        SchedulerNode(chip,
+                      args.step,
+                      args.index,
+                      replay=args.replay).run()
         error = False
 
     finally:

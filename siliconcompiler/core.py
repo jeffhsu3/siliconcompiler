@@ -11,32 +11,35 @@ import logging
 import hashlib
 import shutil
 import importlib
-import inspect
 import textwrap
 import graphviz
 import codecs
-import copy
+import csv
+import yaml
 from inspect import getfullargspec
-from siliconcompiler.remote import client
-from siliconcompiler.schema import Schema, SCHEMA_VERSION
+from siliconcompiler import Schema
+from siliconcompiler.schema import SCHEMA_VERSION, PerNode, Journal, EditableSchema
+from siliconcompiler.schema.parametertype import NodeType
+from siliconcompiler.schema.parametervalue import FileNodeValue
 from siliconcompiler.schema import utils as schema_utils
 from siliconcompiler import utils
-from siliconcompiler.utils.logging import LoggerFormatter, ColorStreamFormatter
+from siliconcompiler.utils.logging import SCColorLoggerFormatter, \
+    SCLoggerFormatter, SCInRunLoggerFormatter, \
+    SCDebugLoggerFormatter, SCDebugInRunLoggerFormatter, \
+    SCBlankLoggerFormatter
 from siliconcompiler import _metadata
 from siliconcompiler import NodeStatus, SiliconCompilerError
 from siliconcompiler.report import _show_summary_table
 from siliconcompiler.report import _generate_summary_image, _open_summary_image
-from siliconcompiler.report import _generate_html_report, _open_html_report
-from siliconcompiler.report import Dashboard
-from siliconcompiler import package as sc_package
+from siliconcompiler.report.dashboard.web import WebDashboard
+from siliconcompiler.report.dashboard.cli import CliDashboard
+from siliconcompiler.report.dashboard import DashboardType
 import glob
-from siliconcompiler.scheduler import run as sc_runner
-from siliconcompiler.flowgraph import _get_flowgraph_nodes, nodes_to_execute, \
-    _get_pruned_node_inputs, _get_flowgraph_exit_nodes, get_executed_nodes, \
-    _get_flowgraph_execution_order, _check_flowgraph_io, \
-    _get_flowgraph_information
+from siliconcompiler.scheduler.scheduler import Scheduler
+from siliconcompiler.utils.flowgraph import _check_flowgraph_io, _get_flowgraph_information
 from siliconcompiler.tools._common import get_tool_task
 from types import FunctionType, ModuleType
+from siliconcompiler.flowgraph import RuntimeFlowgraph
 
 
 class Chip:
@@ -204,12 +207,12 @@ class Chip:
 
     def _add_file_logger(self, filename):
         # Add a file handler for logging
-        logformat = self.logger.handlers[0].formatter
-
         file_handler = logging.FileHandler(filename)
-        file_handler.setFormatter(logformat)
-
         self.logger.addHandler(file_handler)
+
+        self._init_logger_formats()
+
+        return file_handler
 
     ###########################################################################
     def _init_logger(self, step=None, index=None, in_run=False):
@@ -226,57 +229,53 @@ class Chip:
         else:
             in_run = False
 
-        level_format = '%(levelname)-7s'
-        log_format = [level_format]
-        if loglevel == 'debug':
-            log_format.append('%(funcName)-10s')
-            log_format.append('%(lineno)-4s')
+        # Save in run flag
+        self.logger._in_run = in_run
+        self.logger._in_step = step
+        self.logger._in_index = index
 
-        if in_run:
-            max_column_width = 20
-            # Figure out how wide to make step and index fields
-            max_step_len = 1
-            max_index_len = 1
-            nodes_to_run = _get_flowgraph_nodes(self, flow=self.get('option', 'flow'))
-            if self.get('option', 'remote'):
-                nodes_to_run.append((client.remote_step_name, '0'))
-            for future_step, future_index in nodes_to_run:
-                max_step_len = max(len(future_step), max_step_len)
-                max_index_len = max(len(future_index), max_index_len)
-            max_step_len = min(max_step_len, max_column_width)
-            max_index_len = min(max_index_len, max_column_width)
-
-            jobname = self.get('option', 'jobname')
-
-            if step is None:
-                step = '-' * max(max_step_len // 4, 1)
-            if index is None:
-                index = '-' * max(max_index_len // 4, 1)
-
-            log_format.append(utils.truncate_text(jobname, max_column_width))
-            log_format.append(f'{utils.truncate_text(step, max_step_len): <{max_step_len}}')
-            log_format.append(f'{utils.truncate_text(index, max_step_len): >{max_index_len}}')
-
-        log_formatprefix = "| "
-        if loglevel == "quiet":
-            log_format = []
-            log_formatprefix = ""
-
-        log_format.append('%(message)s')
-        stream_logformat = log_formatprefix + ' | '.join(log_format[1:])
+        self.logger.setLevel(schema_utils.translate_loglevel(loglevel))
 
         if not self.logger.hasHandlers():
             stream_handler = logging.StreamHandler(stream=sys.stdout)
+            # Save console handler
+            self.logger._console = stream_handler
             self.logger.addHandler(stream_handler)
 
-        for handler in self.logger.handlers:
-            if ColorStreamFormatter.supports_color(handler):
-                formatter = ColorStreamFormatter(log_formatprefix, level_format, stream_logformat)
-            else:
-                formatter = LoggerFormatter(log_formatprefix, level_format, stream_logformat)
-            handler.setFormatter(formatter)
+            self.logger._support_color = SCColorLoggerFormatter.supports_color(stream_handler)
 
-        self.logger.setLevel(schema_utils.translate_loglevel(loglevel))
+        self._init_logger_formats(loglevel=loglevel)
+
+    def _init_logger_formats(self, loglevel=None):
+        if not loglevel:
+            loglevel = self.schema.get('option', 'loglevel',
+                                       step=self.logger._in_step, index=self.logger._in_index)
+
+        if loglevel == 'quiet':
+            base_format = SCBlankLoggerFormatter()
+        elif self.logger._in_run:
+            if loglevel == 'debug':
+                base_format = SCDebugInRunLoggerFormatter(
+                    self,
+                    self.get('option', 'jobname'),
+                    self.logger._in_step, self.logger._in_index)
+            else:
+                base_format = SCInRunLoggerFormatter(
+                    self,
+                    self.get('option', 'jobname'),
+                    self.logger._in_step, self.logger._in_index)
+        else:
+            if loglevel == 'debug':
+                base_format = SCDebugLoggerFormatter()
+            else:
+                base_format = SCLoggerFormatter()
+
+        for handler in self.logger.handlers.copy():
+            if handler == self.logger._console and self.logger._support_color:
+                formatter = SCColorLoggerFormatter(base_format)
+            else:
+                formatter = base_format
+            handler.setFormatter(formatter)
 
     ###########################################################################
     def _init_codecs(self):
@@ -389,7 +388,7 @@ class Chip:
 
                 is_list = '[' in paramtype
 
-                for vals, step, index in self.schema._getvals(*key):
+                for vals, step, index in self.schema.get(*key, field=None).getvalues():
                     if not vals:
                         continue
                     if not self.get(*key, field='pernode').is_never():
@@ -398,9 +397,10 @@ class Chip:
                         if index is None:
                             index = Schema.GLOBAL_KEY
 
+                    packages = self.get(*key, field='package', step=step, index=index)
                     if not is_list:
                         vals = [vals]
-                    packages = self.get(*key, field='package', step=step, index=index)
+                        packages = [packages]
                     if len(packages) == len(vals):
                         continue
 
@@ -477,7 +477,6 @@ class Chip:
                 progname=progname,
                 description=description,
                 switchlist=switchlist,
-                input_map=input_map,
                 additional_args=additional_args,
                 version=_metadata.version,
                 print_banner=print_banner,
@@ -660,11 +659,10 @@ class Chip:
 
             elif isinstance(use_module, (Library, Chip)):
                 self._loaded_modules['libs'].append(use_module.design)
-                cfg = use_module.schema.cfg
                 keep_inputs = True
                 if not isinstance(use_module, Library):
                     keep_inputs = False
-                self.__import_library(use_module.design, cfg,
+                self.__import_library(use_module.design, use_module,
                                       keep_input=keep_inputs)
 
                 is_auto_enable = getattr(use_module, 'is_auto_enable', None)
@@ -678,26 +676,13 @@ class Chip:
                 raise ValueError(f"{module_name} returned an object with an "
                                  f"unsupported type: {class_name}")
 
-    def __import_data_sources(self, cfg):
-        if 'package' not in cfg or 'source' not in cfg['package']:
+    def __import_data_sources(self, schema):
+        if not schema.valid('package', 'source'):
             return
 
-        for source, config in cfg['package']['source'].items():
-            if source == 'default':
-                continue
-
-            if 'path' not in config or \
-               Schema.GLOBAL_KEY not in config['path']['node'] or \
-               Schema.GLOBAL_KEY not in config['path']['node'][Schema.GLOBAL_KEY]:
-                continue
-
-            path = config['path']['node'][Schema.GLOBAL_KEY][Schema.GLOBAL_KEY]['value']
-
-            ref = None
-            if 'ref' in config and \
-               Schema.GLOBAL_KEY in config['ref']['node'] and \
-               Schema.GLOBAL_KEY in config['ref']['node'][Schema.GLOBAL_KEY]:
-                ref = config['ref']['node'][Schema.GLOBAL_KEY][Schema.GLOBAL_KEY]['value']
+        for source in schema.getkeys('package', 'source'):
+            path = schema.get('package', 'source', source, 'path')
+            ref = schema.get('package', 'source', source, 'ref')
 
             self.register_source(
                 name=source,
@@ -715,15 +700,24 @@ class Chip:
 
         importname = module.design
 
-        src_cfg = self.schema.cfg[group]
+        if hasattr(module, 'schema'):
+            module = module.schema
 
-        if importname in src_cfg:
+        if self.valid(group, importname):
             self.logger.warning(f'Overwriting existing {group} {importname}')
-            del src_cfg[importname]
 
-        # Copy
-        src_cfg[importname] = module.getdict(group, importname)
-        self.__import_data_sources(module.schema.cfg)
+        try:
+            insert_schema = EditableSchema(module).search(group, importname)
+        except KeyError:
+            self.logger.warning(f'{group} {importname} is not valid')
+            return
+
+        EditableSchema(self.schema).insert(
+            group,
+            importname,
+            insert_schema,
+            clobber=True)
+        self.__import_data_sources(module)
 
     ###########################################################################
     def help(self, *keypath):
@@ -746,13 +740,15 @@ class Chip:
 
         # Fetch Values
 
-        description = self.get(*keypath, field='shorthelp')
-        typestr = self.get(*keypath, field='type')
-        switchstr = str(self.get(*keypath, field='switch'))
-        defstr = str(self.schema.get_default(*keypath))
-        requirement = str(self.get(*keypath, field='require'))
-        helpstr = self.get(*keypath, field='help')
-        example = self.get(*keypath, field='example')
+        param = self.get(*keypath, field=None)
+
+        description = param.get(field='shorthelp')
+        typestr = param.get(field='type')
+        switchstr = str(param.get(field='switch'))
+        defstr = str(param.default.get())
+        requirement = str(param.get(field='require'))
+        helpstr = param.get(field='help')
+        example = param.get(field='example')
 
         examplestr = ("\nExamples:    " + example[0] + ''.join(
                       ["\n             " + ex for ex in example[1:]]))
@@ -810,9 +806,12 @@ class Chip:
             >>> check = chip.valid('metric', 'foo', '0', 'tasktime', default_valid=True)
             Returns True, even if "foo" and "0" aren't in current configuration.
         """
+        if job:
+            return self.schema.history(job).valid(*keypath,
+                                                  default_valid=default_valid,
+                                                  check_complete=check_complete)
         return self.schema.valid(*keypath,
                                  default_valid=default_valid,
-                                 job=job,
                                  check_complete=check_complete)
 
     ###########################################################################
@@ -852,7 +851,7 @@ class Chip:
             strict = self.schema.get('option', 'strict')
             if field == 'value' and strict:
                 pernode = self.schema.get(*keypath, field='pernode')
-                if pernode == schema_utils.PerNode.OPTIONAL and \
+                if pernode == PerNode.OPTIONAL and \
                    (step is None or index is None) and \
                    (Schema.GLOBAL_KEY not in (step, index)):  # allow explicit access to global
                     self.error(
@@ -862,7 +861,10 @@ class Chip:
                     )
                     return None
 
-            return self.schema.get(*keypath, field=field, job=job, step=step, index=index)
+            if job:
+                return self.schema.history(job).get(*keypath, field=field, step=step, index=index)
+
+            return self.schema.get(*keypath, field=field, step=step, index=index)
         except (ValueError, TypeError) as e:
             self.error(str(e))
             return None
@@ -895,7 +897,10 @@ class Chip:
             self.logger.debug('Getting all schema parameter keys.')
 
         try:
-            return self.schema.getkeys(*keypath, job=job)
+            if job:
+                return self.schema.history(job).getkeys(*keypath)
+
+            return self.schema.getkeys(*keypath)
         except (ValueError, TypeError) as e:
             self.error(str(e))
             return None
@@ -938,23 +943,17 @@ class Chip:
             return None
 
     ###########################################################################
-    def __add_set_package(self, keypath, value, package, step, index, clobber, add):
-        sc_type = self.get(*keypath, field='type')
-        if 'file' in sc_type or 'dir' in sc_type:
-            value_list = isinstance(value, (list, tuple))
-            package_list = isinstance(package, (list, tuple))
-            if value_list != package_list:
-                if value_list:
-                    package = len(value) * [package]
-                else:
-                    raise ValueError()
+    def __add_set_package(self, value_success, package):
+        if not isinstance(value_success, (list, tuple)):
+            value_success = [value_success]
+        if not isinstance(package, (list, tuple)):
+            package = [package]
+        if len(value_success) != len(package):
+            package = len(value_success) * package
 
-            if add:
-                self.schema.add(*keypath, package, field='package',
-                                step=step, index=index)
-            else:
-                self.schema.set(*keypath, package, field='package',
-                                step=step, index=index, clobber=clobber)
+        for val, package in zip(value_success, package):
+            if val.type in ('file', 'dir'):
+                val.set(package, field='package')
 
     ###########################################################################
     def set(self, *args, field='value', clobber=True, step=None, index=None, package=None):
@@ -1000,8 +999,8 @@ class Chip:
         try:
             value_success = self.schema.set(*keypath, value, field=field, clobber=clobber,
                                             step=step, index=index)
-            if field == 'value' and value_success:
-                self.__add_set_package(keypath, value, package, step, index, True, False)
+            if field == 'value' and value_success and package:
+                self.__add_set_package(value_success, package)
 
         except (ValueError, TypeError) as e:
             self.error(e)
@@ -1087,8 +1086,8 @@ class Chip:
         try:
             value_success = self.schema.add(*args, field=field, step=step, index=index)
 
-            if field == 'value' and value_success:
-                self.__add_set_package(keypath, value, package, step, index, True, True)
+            if field == 'value' and value_success and package:
+                self.__add_set_package(value_success, package)
         except (ValueError, TypeError) as e:
             self.error(str(e))
 
@@ -1102,7 +1101,8 @@ class Chip:
         '''
 
         if package:
-            filename = os.path.join(sc_package.path(self, package), filename)
+            resolvers = self.get("package", field="schema").get_resolvers()
+            filename = os.path.join(resolvers[package](), filename)
 
         if not os.path.isfile(filename):
             raise FileNotFoundError(filename)
@@ -1111,7 +1111,15 @@ class Chip:
         package_dir = os.path.dirname(os.path.abspath(filename))
 
         def __make_path(rel, path):
-            path = utils._resolve_env_vars(self, path, None, None)
+            env_save = os.environ.copy()
+            schema_env = {}
+            for env in self.getkeys('option', 'env'):
+                schema_env[env] = self.get('option', 'env', env)
+            os.environ.update(schema_env)
+            path = os.path.expandvars(path)
+            path = os.path.expanduser(path)
+            os.environ.clear()
+            os.environ.update(env_save)
             if os.path.isabs(path):
                 if path.startswith(rel):
                     return os.path.relpath(path, rel), package_name
@@ -1282,7 +1290,7 @@ class Chip:
         """
         strict = self.get('option', 'strict')
         pernode = self.get(*keypath, field='pernode')
-        if strict and pernode == schema_utils.PerNode.OPTIONAL and (step is None or index is None):
+        if strict and pernode == PerNode.OPTIONAL and (step is None or index is None):
             self.error(
                 f"Invalid args to find_files() of keypath {keypath}: step and "
                 "index are required for reading from this parameter while "
@@ -1314,7 +1322,9 @@ class Chip:
         """Internal find_files() that allows you to skip step/index for optional
         params, regardless of [option, strict]."""
 
-        paramtype = self.get(*keypath, field='type', job=job)
+        param = self.get(*keypath, field=None, job=job)
+
+        paramtype = param.get(field='type')
 
         if 'file' not in paramtype and 'dir' not in paramtype:
             self.error('Can only call find_files on file or dir types')
@@ -1322,15 +1332,15 @@ class Chip:
 
         is_list = bool(re.match(r'\[', paramtype))
 
-        paths = self.schema.get(*keypath, job=job, step=step, index=index)
-        dependencies = self.schema.get(*keypath, job=job,
-                                       step=step, index=index, field='package')
+        paths = param.get(step=step, index=index)
+        dependencies = param.get(field='package', step=step, index=index)
+
         # Convert to list if we have scalar
         if not is_list:
             # Dependencies are always specified as list with default []
             # If paths is a scalar we convert the default [] to [None]
             # to have a matching list with one element
-            if dependencies == []:
+            if not dependencies:
                 dependencies = [None]
             paths = [paths]
 
@@ -1340,7 +1350,6 @@ class Chip:
             dependencies = [dependencies[list_index]]
 
         paths = self.__convert_paths_to_posix(paths)
-        dependencies = self.__convert_paths_to_posix(dependencies)
 
         result = []
 
@@ -1374,29 +1383,31 @@ class Chip:
 
         if search_paths:
             search_paths = self.__convert_paths_to_posix(search_paths)
+        else:
+            search_paths = [self.cwd]
 
+        resolvers = self.get("package", field="schema").get_resolvers()
         for (dependency, path) in zip(dependencies, paths):
-            if not search_paths and collection_dir:
-                import_path = self.__find_sc_imported_file(path, dependency, collection_dir)
-                if import_path:
-                    result.append(import_path)
-                    continue
-            if dependency:
-                depdendency_path = os.path.abspath(
-                    os.path.join(sc_package.path(self, dependency), path))
-                if os.path.exists(depdendency_path):
-                    result.append(depdendency_path)
+            faux_param = FileNodeValue()
+            faux_param.set(path)
+            try:
+                if dependency:
+                    faux_param.set(dependency, field='package')
+                    faux_search = [resolvers[dependency]()]
                 else:
-                    result.append(None)
-                    if not missing_ok:
-                        self.error(f'Could not find {path} in {dependency}. ({keypath})')
-                continue
-            result.append(utils.find_sc_file(self,
-                                             path,
-                                             missing_ok=missing_ok,
-                                             search_paths=search_paths,
-                                             step=step,
-                                             index=index))
+                    faux_search = search_paths
+                resolved = faux_param.resolve_path(
+                    search=faux_search,
+                    collection_dir=collection_dir)
+            except FileNotFoundError:
+                resolved = None
+                if not missing_ok:
+                    if dependency:
+                        self.error(f'Could not find {path} in {dependency}. [{",".join(keypath)}]')
+                    else:
+                        self.error(f'Could not find {path}. [{",".join(keypath)}]')
+
+            result.append(resolved)
 
         if self._relative_path and not abs_path_only:
             rel_result = []
@@ -1409,6 +1420,8 @@ class Chip:
 
         # Convert back to scalar if that was original type
         if not is_list:
+            if not result:
+                return None
             return result[0]
 
         return result
@@ -1421,33 +1434,20 @@ class Chip:
 
         Returns none if not found
         """
-        if not path:
+        if not collected_dir:
             return None
 
-        collected_files = os.listdir(collected_dir)
-        if not collected_files:
+        faux_param = FileNodeValue()
+        faux_param.set(path)
+        faux_param.set(package, field='package')
+
+        try:
+            resolved = faux_param.resolve_path(collection_dir=collected_dir)
+        except FileNotFoundError:
             return None
 
-        path_paths = pathlib.PurePosixPath(path).parts
-        for n in range(len(path_paths)):
-            # Search through the path elements to see if any of the previous path parts
-            # have been imported
-
-            n += 1
-            basename = str(pathlib.PurePosixPath(*path_paths[0:n]))
-            endname = str(pathlib.PurePosixPath(*path_paths[n:]))
-
-            import_name = utils.get_hashed_filename(basename, package=package)
-            if import_name not in collected_files:
-                continue
-
-            abspath = os.path.join(collected_dir, import_name)
-            if endname:
-                abspath = os.path.join(abspath, endname)
-            abspath = os.path.abspath(abspath)
-            if os.path.exists(abspath):
-                return abspath
-
+        if resolved.startswith(collected_dir):
+            return resolved
         return None
 
     def find_node_file(self, path, step, jobname=None, index='0'):
@@ -1531,7 +1531,7 @@ class Chip:
                 # only do something if type is file or dir
                 continue
 
-            values = self.schema._getvals(*keypath)
+            values = self.schema.get(*keypath, field=None).getvalues()
             for value, step, index in values:
                 if not value:
                     continue
@@ -1552,39 +1552,19 @@ class Chip:
             True if all file paths are valid, otherwise False.
         '''
 
-        allkeys = self.allkeys()
-        error = False
-        for keypath in allkeys:
-            paramtype = self.get(*keypath, field='type')
-            is_file = 'file' in paramtype
-            is_dir = 'dir' in paramtype
-            is_list = paramtype.startswith('[')
+        ignore_keys = []
+        for keypath in self.allkeys():
+            if keypath[-2:] == ('option', 'builddir'):
+                ignore_keys.append(keypath)
 
-            if is_file or is_dir:
-                if keypath[-2:] == ('option', 'builddir'):
-                    # Skip ['option', 'builddir'] since it will get created by run() if it doesn't
-                    # exist
-                    continue
+        package_map = self.get("package", field="schema").get_resolvers()
 
-                for check_files, step, index in self.schema._getvals(*keypath):
-                    if not check_files:
-                        continue
-
-                    if not is_list:
-                        check_files = [check_files]
-
-                    for idx, check_file in enumerate(check_files):
-                        found_file = self.__find_files(*keypath,
-                                                       missing_ok=True,
-                                                       step=step, index=index,
-                                                       list_index=idx)
-                        if is_list:
-                            found_file = found_file[0]
-                        if not found_file:
-                            self.logger.error(f"Parameter {keypath} path {check_file} is invalid")
-                            error = True
-
-        return not error
+        return self.schema.check_filepaths(
+            ignore_keys=ignore_keys,
+            logger=self.logger,
+            packages=package_map,
+            collection_dir=self._getcollectdir(),
+            cwd=self.cwd)
 
     ###########################################################################
     def check_manifest(self):
@@ -1624,11 +1604,26 @@ class Chip:
             error = True
             self.logger.error(f"flowgraph {flow} not defined.")
 
-        nodes = [node for node in nodes_to_execute(self)
+        runtime = RuntimeFlowgraph(
+            self.schema.get("flowgraph", flow, field='schema'),
+            args=(self.get('arg', 'step'), self.get('arg', 'index')),
+            from_steps=self.get('option', 'from'),
+            to_steps=self.get('option', 'to'),
+            prune_nodes=self.get('option', 'prune'))
+
+        nodes = [node for node in runtime.get_nodes()
                  if self.get('record', 'status', step=node[0], index=node[1])
                  != NodeStatus.SKIPPED]
+        flow_schema = self.schema.get("flowgraph", flow, field="schema")
+        runtime_io = RuntimeFlowgraph(
+            flow_schema,
+            args=(self.get('arg', 'step'), self.get('arg', 'index')),
+            from_steps=set([step for step, _ in flow_schema.get_entry_nodes()]),
+            prune_nodes=self.get('option', 'prune'))
+
         for (step, index) in nodes:
-            for in_step, in_index in _get_pruned_node_inputs(self, flow, (step, index)):
+            for in_step, in_index in runtime_io.get_node_inputs(
+                    step, index, record=self.schema.get("record", field="schema")):
                 if (in_step, in_index) in nodes:
                     # we're gonna run this step, OK
                     continue
@@ -1653,7 +1648,7 @@ class Chip:
             lib_node_check.append((step, None))
         lib_node_check.extend(nodes)
         for lib_key in libs_to_check:
-            for val, step, index in self.schema._getvals(*lib_key):
+            for val, step, index in self.schema.get(*lib_key, field=None).getvalues():
                 if (step, index) in lib_node_check:
                     libraries.update(val)
 
@@ -1667,9 +1662,8 @@ class Chip:
         for key in allkeys:
             keypath = ",".join(key)
             if 'default' not in key and 'history' not in key and 'library' not in key:
-                key_empty = self.schema.is_empty(*key)
-                requirement = self.get(*key, field='require')
-                if key_empty and requirement:
+                param = self.get(*key, field=None)
+                if param.is_empty() and param.get(field='require'):
                     error = True
                     self.logger.error(f"Global requirement missing for [{keypath}].")
 
@@ -1711,16 +1705,20 @@ class Chip:
                                         step=step, index=index)
                 for item in all_required:
                     keypath = item.split(',')
-                    if self.schema.is_empty(*keypath):
+                    if self.schema.get(*keypath, field=None).is_empty():
                         error = True
                         self.logger.error(f"Value empty for {keypath} for {tool}.")
 
             task_run = getattr(task_module, 'run', None)
-            if self.schema.is_empty('tool', tool, 'exe') and not task_run:
+            if self.schema.get('tool', tool, 'exe', field=None).is_empty() and not task_run:
                 error = True
                 self.logger.error(f'No executable or run() function specified for {tool}/{task}')
 
-        if not _check_flowgraph_io(self, nodes=nodes):
+        runtime_full = RuntimeFlowgraph(
+            self.schema.get("flowgraph", flow, field='schema'),
+            to_steps=self.get('option', 'to'),
+            prune_nodes=self.get('option', 'prune'))
+        if not error and not _check_flowgraph_io(self, nodes=runtime_full.get_nodes()):
             error = True
 
         return not error
@@ -1744,26 +1742,8 @@ class Chip:
             Loads the file mychip.json into the current Chip object.
         """
 
-        # Read from file into new schema object
-        schema = Schema(manifest=filename, logger=self.logger)
-
         # Merge data in schema with Chip configuration
-        self.schema.merge_manifest(schema, job=job, clear=clear, clobber=clobber)
-
-        # Read history, if we're not already reading into a job
-        if 'history' in schema.cfg and not job:
-            for historic_job in schema.cfg['history'].keys():
-                self.schema.merge_manifest(schema.history(historic_job),
-                                           job=historic_job,
-                                           clear=clear,
-                                           clobber=clobber)
-
-        # TODO: better way to handle this?
-        if 'library' in schema.cfg:
-            for libname in schema.cfg['library'].keys():
-                self.__import_library(libname, schema.cfg['library'][libname],
-                                      job=job,
-                                      clobber=clobber)
+        self.schema.read_manifest(filename)
 
     ###########################################################################
     def write_manifest(self, filename, prune=False, abspath=False):
@@ -1797,12 +1777,11 @@ class Chip:
         if abspath:
             schema = self.__abspath()
 
-        if prune:
-            if schema is self.schema:
-                schema = schema.copy()
+        if re.search(r'(\.json|\.sup)(\.gz)*$', filepath):
+            schema.write_manifest(filepath)
+            return
 
-            self.logger.debug('Pruning dictionary before writing file %s', filepath)
-            schema.prune()
+        tcl_record = "get" in Journal.access(schema).get_types()
 
         is_csv = re.search(r'(\.csv)(\.gz)*$', filepath)
 
@@ -1818,25 +1797,84 @@ class Chip:
 
         # format specific printing
         try:
-            if re.search(r'(\.json|\.sup)(\.gz)*$', filepath):
-                schema.write_json(fout)
-            elif re.search(r'(\.yaml|\.yml)(\.gz)*$', filepath):
-                schema.write_yaml(fout)
+            if re.search(r'(\.yaml|\.yml)(\.gz)*$', filepath):
+                class YamlIndentDumper(yaml.Dumper):
+                    def increase_indent(self, flow=False, indentless=False):
+                        return super().increase_indent(flow=flow, indentless=False)
+
+                fout.write(yaml.dump(schema.getdict(), Dumper=YamlIndentDumper,
+                                     default_flow_style=False))
+
             elif re.search(r'(\.tcl)(\.gz)*$', filepath):
                 # TCL only gets values associated with the current node.
                 step = self.get('arg', 'step')
                 index = self.get('arg', 'index')
-                schema.write_tcl(fout,
+                self.__write_tcl(fout,
+                                 schema,
                                  prefix="dict set sc_cfg",
                                  step=step,
                                  index=index,
-                                 template=utils.get_file_template('tcl/manifest.tcl.j2'))
+                                 template=utils.get_file_template('tcl/manifest.tcl.j2'),
+                                 record=tcl_record)
             elif is_csv:
-                schema.write_csv(fout)
+                csvwriter = csv.writer(fout)
+                csvwriter.writerow(['Keypath', 'Value'])
+
+                allkeys = schema.allkeys()
+                for key in allkeys:
+                    keypath = ','.join(key)
+                    param = schema.get(*key, field=None)
+                    for value, step, index in param.getvalues():
+                        if step is None and index is None:
+                            keypath = ','.join(key)
+                        elif index is None:
+                            keypath = ','.join([*key, step, 'default'])
+                        else:
+                            keypath = ','.join([*key, step, index])
+
+                        if isinstance(value, list):
+                            for item in value:
+                                csvwriter.writerow([keypath, item])
+                        else:
+                            csvwriter.writerow([keypath, value])
             else:
                 self.error(f'File format not recognized {filepath}')
         finally:
             fout.close()
+
+    def __write_tcl(self, fout, schema,
+                    prefix="", step=None, index=None, template=None, record=False):
+        tcl_set_cmds = []
+        for key in sorted(schema.allkeys()):
+            # print out all non default values
+            if 'default' in key:
+                continue
+
+            param = schema.get(*key, field=None)
+
+            # create a TCL dict
+            keystr = ' '.join([NodeType.to_tcl(keypart, 'str') for keypart in key])
+
+            valstr = param.gettcl(step=step, index=index)
+            if valstr is None:
+                continue
+
+            # Ensure empty values get something
+            if valstr == '':
+                valstr = '{}'
+
+            tcl_set_cmds.append(f"{prefix} {keystr} {valstr}")
+
+        if template:
+            fout.write(template.render(manifest_dict='\n'.join(tcl_set_cmds),
+                                       scroot=os.path.abspath(
+                                            os.path.join(os.path.dirname(__file__))),
+                                       record_access=record,
+                                       record_access_id=Schema._RECORD_ACCESS_IDENTIFIER))
+        else:
+            for cmd in tcl_set_cmds:
+                fout.write(cmd + '\n')
+            fout.write('\n')
 
     ###########################################################################
     def check_checklist(self, standard, items=None,
@@ -1873,183 +1911,47 @@ class Chip:
             >>> status = chip.check_checklist('iso9000', 'd000')
             Returns status.
         '''
-        error = False
-
-        self.logger.info(f'Checking checklist {standard}')
-
         if standard not in self.getkeys('checklist'):
             self.logger.error(f'{standard} has not been loaded.')
             return False
 
-        if items is None:
-            items = self.getkeys('checklist', standard)
-
-        # these tasks are recorded by SC so there are no reports
-        metrics_without_reports = (
-            'tasktime',
-            'totaltime',
-            'exetime',
-            'memory')
-
-        for item in items:
-            if item not in self.getkeys('checklist', standard):
-                self.logger.error(f'{item} is not a check in {standard}.')
-                error = True
-                continue
-
-            allow_missing_reports = True
-
-            has_check = False
-
-            all_criteria = self.get('checklist', standard, item, 'criteria')
-            for criteria in all_criteria:
-                m = re.match(r'^(\w+)\s*([\>\=\<]+)\s*([+\-]?\d+(\.\d+)?(e[+\-]?\d+)?)$',
-                             criteria.strip())
-                if not m:
-                    self.error(f"Illegal checklist criteria: {criteria}")
-                    return False
-                elif m.group(1) not in self.getkeys('metric'):
-                    self.error(f"Criteria must use legal metrics only: {criteria}")
-                    return False
-
-                metric = m.group(1)
-                op = m.group(2)
-                if self.get('metric', metric, field='type') == 'int':
-                    goal = int(m.group(3))
-                    number_format = 'd'
-                else:
-                    goal = float(m.group(3))
-
-                    if goal == 0.0 or (abs(goal) > 1e-3 and abs(goal) < 1e5):
-                        number_format = '.3f'
-                    else:
-                        number_format = '.3e'
-
-                if metric not in metrics_without_reports:
-                    allow_missing_reports = False
-
-                tasks = self.get('checklist', standard, item, 'task')
-                for job, step, index in tasks:
-                    if job not in self.getkeys('history'):
-                        self.error(f'{job} not found in history')
-
-                    flow = self.get('option', 'flow', job=job)
-
-                    if step not in self.getkeys('flowgraph', flow, job=job):
-                        self.error(f'{step} not found in flowgraph')
-
-                    if index not in self.getkeys('flowgraph', flow, step, job=job):
-                        self.error(f'{step}{index} not found in flowgraph')
-
-                    if self.get('record', 'status', step=step, index=index, job=job) == \
-                            NodeStatus.SKIPPED:
-                        if verbose:
-                            self.logger.warning(f'{step}{index} was skipped')
-                        continue
-
-                    has_check = True
-
-                    # Automated checks
-                    flow = self.get('option', 'flow', job=job)
-                    tool = self.get('flowgraph', flow, step, index, 'tool', job=job)
-                    task = self.get('flowgraph', flow, step, index, 'task', job=job)
-
-                    value = self.get('metric', metric, job=job, step=step, index=index)
-                    criteria_ok = utils.safecompare(self, value, op, goal)
-                    if metric in self.getkeys('checklist', standard, item, 'waiver'):
-                        waivers = self.get('checklist', standard, item, 'waiver', metric)
-                    else:
-                        waivers = []
-
-                    criteria_str = f'{metric}{op}{goal:{number_format}}'
-                    compare_str = f'{value:{number_format}}{op}{goal:{number_format}}'
-                    step_desc = f'job {job} with step {step}{index} and task {tool}/{task}'
-                    if not criteria_ok and waivers:
-                        self.logger.warning(f'{item} criteria {criteria_str} ({compare_str}) unmet '
-                                            f'by {step_desc}, but found waivers.')
-                    elif not criteria_ok:
-                        self.logger.error(f'{item} criteria {criteria_str} ({compare_str}) unmet '
-                                          f'by {step_desc}.')
-                        error = True
-                    elif verbose and criteria_ok:
-                        self.logger.info(f'{item} criteria {criteria_str} met by {step_desc}.')
-
-                    has_reports = \
-                        self.valid('tool', tool, 'task', task, 'report', metric, job=job) and \
-                        self.get('tool', tool, 'task', task, 'report', metric, job=job,
-                                 step=step, index=index)
-
-                    if metric in metrics_without_reports and not has_reports:
-                        # No reports available and it is allowed
-                        continue
-
-                    try:
-                        reports = self.find_files('tool', tool, 'task', task, 'report', metric,
-                                                  job=job,
-                                                  step=step, index=index,
-                                                  missing_ok=not require_reports)
-                    except SiliconCompilerError:
-                        reports = []
-                        continue
-
-                    if require_reports and not reports:
-                        self.logger.error(f'No EDA reports generated for metric {metric} in '
-                                          f'{step_desc}')
-                        error = True
-
-                    for report in reports:
-                        if not report:
-                            continue
-
-                        report = os.path.relpath(report, self.cwd)
-                        if report not in self.get('checklist', standard, item, 'report'):
-                            self.add('checklist', standard, item, 'report', report)
-
-            if has_check:
-                if require_reports and \
-                        not allow_missing_reports and \
-                        not self.get('checklist', standard, item, 'report'):
-                    # TODO: validate that report exists?
-                    self.logger.error(f'No report documenting item {item}')
-                    error = True
-
-                if check_ok and not self.get('checklist', standard, item, 'ok'):
-                    self.logger.error(f"Item {item} 'ok' field not checked")
-                    error = True
-
-        if not error:
-            self.logger.info('Check succeeded!')
-
-        return not error
+        return self.get("checklist", standard, field="schema").check(
+            items=items, check_ok=check_ok, require_reports=require_reports
+        )
 
     ###########################################################################
-    def __import_library(self, libname, libcfg, job=None, clobber=True, keep_input=True):
+    def __import_library(self, libname, library, job=None, clobber=True, keep_input=True):
         '''Helper to import library with config 'libconfig' as a library
         'libname' in current Chip object.'''
-        if job:
-            cfg = self.schema.cfg['history'][job]['library']
-        else:
-            cfg = self.schema.cfg['library']
 
-        if 'library' in libcfg:
-            for sublib_name, sublibcfg in libcfg['library'].items():
-                self.__import_library(sublib_name, sublibcfg,
-                                      job=job, clobber=clobber, keep_input=keep_input)
-
-        if libname in cfg:
+        if libname in self.schema.getkeys('library'):
             if not clobber:
                 return
+        if hasattr(library, 'schema'):
+            library = library.schema
 
-        self.__import_data_sources(libcfg)
-        cfg[libname] = {}
+        try:
+            for sublib in library.getkeys('library'):
+                self.__import_library(sublib,
+                                      EditableSchema(library).search('library', sublib),
+                                      job=job, clobber=clobber, keep_input=keep_input)
+        except KeyError:
+            pass
+
+        self.__import_data_sources(library)
 
         # Only keep some sections to avoid recursive bloat
         keeps = ['asic', 'design', 'fpga', 'option', 'output', 'package']
         if keep_input:
             keeps.append('input')
-        for section in list(libcfg.keys()):
-            if section in keeps:
-                cfg[libname][section] = copy.deepcopy(libcfg[section])
+
+        importlibrary = library.copy()
+        edit_lib = EditableSchema(importlibrary)
+        for section in list(importlibrary.getkeys()):
+            if section not in keeps:
+                edit_lib.remove(section)
+
+        EditableSchema(self.schema).insert("library", libname, importlibrary, clobber=True)
 
     ###########################################################################
     def write_flowgraph(self, filename, flow=None,
@@ -2334,6 +2236,8 @@ class Chip:
 
         nodes = {}
 
+        search_schema = EditableSchema(self.schema)
+
         def collect_library(root_type, lib, name=None):
             if not name:
                 name = lib.design
@@ -2372,15 +2276,15 @@ class Chip:
 
             for in_lib in lib.get('option', 'library',
                                   step=Schema.GLOBAL_KEY, index=Schema.GLOBAL_KEY):
-                collect_library("library", Schema(cfg=self.getdict('library', in_lib)),
+                collect_library("library", search_schema.search('library', in_lib),
                                 name=in_lib)
             for in_lib in lib.get('asic', 'logiclib',
                                   step=Schema.GLOBAL_KEY, index=Schema.GLOBAL_KEY):
-                collect_library("logiclib", Schema(cfg=self.getdict('library', in_lib)),
+                collect_library("logiclib", search_schema.search('library', in_lib),
                                 name=in_lib)
             for in_lib in lib.get('asic', 'macrolib',
                                   step=Schema.GLOBAL_KEY, index=Schema.GLOBAL_KEY):
-                collect_library("macrolib", Schema(cfg=self.getdict('library', in_lib)),
+                collect_library("macrolib", search_schema.search('library', in_lib),
                                 name=in_lib)
 
         collect_library("design", self)
@@ -2418,6 +2322,8 @@ class Chip:
         all_libraries = self.getkeys('library')
 
         def swap(*key):
+            if not self.schema.valid(*key):
+                return
             if step is not None:
                 r_step = step
                 r_index = index
@@ -2433,7 +2339,7 @@ class Chip:
                              list(map(lambda x: new_library if x == org_library else x, val)),
                              step=r_step, index=r_index)
             else:
-                for val, r_step, r_index in self.schema._getvals(*key):
+                for val, r_step, r_index in self.schema.get(*key, field=None).getvalues():
                     if r_step is None:
                         r_step = Schema.GLOBAL_KEY
                     if r_index is None:
@@ -2511,7 +2417,7 @@ class Chip:
             is_file = re.search('file', leaftype)
             if is_dir or is_file:
                 if self.get(*key, field='copy'):
-                    for value, step, index in self.schema._getvals(*key):
+                    for value, step, index in self.schema.get(*key, field=None).getvalues():
                         if not value:
                             continue
                         packages = self.get(*key, field='package', step=step, index=index)
@@ -2695,9 +2601,15 @@ class Chip:
             flowgraph_nodes = [(step, index)]
         elif step:
             flow = self.get('option', 'flow')
-            flowgraph_nodes = _get_flowgraph_nodes(self, flow=flow, steps=[step])
+            flowgraph_nodes = [(step, index) for index in self.getkeys("flowgraph", flow, step)]
         else:
-            flowgraph_nodes = nodes_to_execute(self)
+            flow = self.get('option', 'flow')
+            runtime = RuntimeFlowgraph(
+                self.schema.get("flowgraph", flow, field='schema'),
+                from_steps=self.get('option', 'from'),
+                to_steps=self.get('option', 'to'),
+                prune_nodes=self.get('option', 'prune'))
+            flowgraph_nodes = runtime.get_nodes()
 
         if not archive_name:
             if step and index:
@@ -2816,8 +2728,12 @@ class Chip:
         if check:
             # compare previous hash to new hash
             oldhash = self.schema.get(*keypath, step=step, index=index, field='filehash')
+            if not isinstance(oldhash, list):
+                oldhash = [oldhash]
             check_failed = False
             for i, item in enumerate(oldhash):
+                if item is None:
+                    continue
                 if item != hashlist[i]:
                     self.logger.error(f"Hash mismatch for [{keypath}]")
                     check_failed = True
@@ -2830,11 +2746,11 @@ class Chip:
             set_step = None
             set_index = None
             pernode = self.get(*keypath, field='pernode')
-            if pernode == schema_utils.PerNode.REQUIRED:
+            if pernode == PerNode.REQUIRED:
                 set_step = step
                 set_index = index
-            elif pernode == schema_utils.PerNode.OPTIONAL:
-                for vals, key_step, key_index in self.schema._getvals(*keypath):
+            elif pernode == PerNode.OPTIONAL:
+                for vals, key_step, key_index in self.schema.get(*keypath, field=None).getvalues():
                     if key_step == step and key_index == index and vals:
                         set_step = step
                         set_index = index
@@ -2849,7 +2765,7 @@ class Chip:
         return hashlist
 
     ###########################################################################
-    def dashboard(self, wait=True, port=None, graph_chips=None):
+    def dashboard(self, wait=True, port=None, graph_chips=None, type=DashboardType.WEB):
         '''
         Open a session of the dashboard.
 
@@ -2863,6 +2779,8 @@ class Chip:
                 dashboard to.
             graph_chips (list): A list of dictionaries of the format
                 {'chip': chip object, 'name': chip name}
+            type (enum): A string specifying what kind of dashboard to
+                launch. Available options: 'cli', 'web'.
 
         Examples:
             >>> chip.dashboard()
@@ -2873,7 +2791,14 @@ class Chip:
             self._dash.stop()
             self._dash = None
 
-        self._dash = Dashboard(self, port=port, graph_chips=graph_chips)
+        # Select dashboard type
+        type = DashboardType(type)
+        if type == DashboardType.WEB:
+            self._dash = WebDashboard(self, port=port, graph_chips=graph_chips)
+        elif type == DashboardType.CLI:
+            self._dash = CliDashboard(self)
+            wait = False
+
         self._dash.open_dashboard()
 
         if wait:
@@ -2889,7 +2814,7 @@ class Chip:
         return self._dash
 
     ###########################################################################
-    def summary(self, show_all_indices=False, generate_image=True, generate_html=False):
+    def summary(self, show_all_indices=False):
         '''
         Prints a summary of the compilation manifest.
 
@@ -2902,13 +2827,6 @@ class Chip:
             show_all_indices (bool): If True, displays metrics for all indices
                 of each step. If False, displays metrics only for winning
                 indices.
-            generate_image (bool): If True, generates a summary image featuring
-                a layout screenshot and a subset of metrics. Requires that the
-                current job has an ending node that generated a PNG file.
-            generate_html (bool): If True, generates an HTML report featuring a
-                metrics summary table and manifest tree view. The report will
-                include a layout screenshot if the current job has an ending node
-                that generated a PNG file.
 
         Examples:
             >>> chip.summary()
@@ -2917,40 +2835,43 @@ class Chip:
 
         # display whole flowgraph if no from/to specified
         flow = self.get('option', 'flow')
-        nodes_to_execute = get_executed_nodes(self, flow)
+        runtime = RuntimeFlowgraph(
+            self.schema.get("flowgraph", flow, field='schema'),
+            to_steps=self.get('option', 'to'),
+            prune_nodes=self.get('option', 'prune'))
+        _show_summary_table(self, flow, list(runtime.get_nodes()),
+                            show_all_indices=show_all_indices)
 
-        _show_summary_table(self, flow, nodes_to_execute, show_all_indices=show_all_indices)
+        # dashboard does not generate any data
+        self.logger.info('Dashboard at "sc-dashboard '
+                         f'-cfg {self.getworkdir()}/{self.design}.pkg.json"')
 
-        # Create a report for the Chip object which can be viewed in a web browser.
-        # Place report files in the build's root directory.
-        work_dir = self.getworkdir()
-        if os.path.isdir(work_dir):
-            # Mark file paths where the reports can be found if they were generated.
-            results_img = os.path.join(work_dir, f'{self.design}.png')
-            results_html = os.path.join(work_dir, 'report.html')
+    ###########################################################################
+    def snapshot(self, path=None, display=True):
+        '''
+        Creates a snapshot image of the job
 
-            for path in (results_img, results_html):
-                if os.path.exists(path):
-                    os.remove(path)
+        Args:
+            path (str): Path to generate the image at, if not provided will default to
+                <job>/<design>.png
+            display (bool): If True, will open the image for viewing. If :keypath:`option,nodisplay`
+                is True, this argument will be ignored.
 
-            if generate_image:
-                _generate_summary_image(self, results_img)
+        Examples:
+            >>> chip.snapshot()
+            Creates a snapshot image in the default location
+        '''
 
-            if generate_html:
-                _generate_html_report(self, flow, nodes_to_execute, results_html)
+        if not path:
+            path = os.path.join(self.getworkdir(), f'{self.design}.png')
 
-            # dashboard does not generate any data
-            self.logger.info(f'Dashboard at "sc-dashboard -cfg {work_dir}/{self.design}.pkg.json"')
+        if os.path.exists(path):
+            os.remove(path)
 
-            # Try to open the results and layout only if '-nodisplay' is not set.
-            # Priority: PNG > HTML > dashboard.
-            if not self.get('option', 'nodisplay'):
-                if os.path.isfile(results_img):
-                    _open_summary_image(results_img)
-                elif os.path.isfile(results_html):
-                    _open_html_report(self, results_html)
-                else:
-                    self.dashboard(wait=False)
+        _generate_summary_image(self, path)
+
+        if os.path.isfile(path) and not self.get('option', 'nodisplay') and display:
+            _open_summary_image(path)
 
     ###########################################################################
     def clock(self, pin, period, jitter=0, mode='global'):
@@ -3006,7 +2927,7 @@ class Chip:
             flow (str): Flow name
             step (str): Step name
             task (module/str): Task to associate with this node
-            index (int): Step index
+            index (int/str): Step index
 
         Examples:
             >>> import siliconcomiler.tools.openroad.place as place
@@ -3014,40 +2935,15 @@ class Chip:
             Creates a 'place' task with step='apr_place' and index=0 and binds it to the
             'openroad' tool.
         '''
+        from siliconcompiler import FlowgraphSchema
+        from siliconcompiler.schema import EditableSchema
 
-        if step in (Schema.GLOBAL_KEY, 'default', 'sc_collected_files'):
-            self.error(f'Illegal step name: {step} is reserved')
-            return
-
-        index = str(index)
-
-        # Determine task name and module
-        task_module = None
-        if (isinstance(task, str)):
-            task_module = task
-        elif inspect.ismodule(task):
-            task_module = task.__name__
-            self.modules[task_module] = task
+        if not self.schema.valid("flowgraph", flow):
+            graph = FlowgraphSchema(flow)
+            EditableSchema(self.schema).insert("flowgraph", flow, graph)
         else:
-            raise SiliconCompilerError(
-                f"{task} is not a string or module and cannot be used to setup a task.",
-                chip=self)
-
-        task_parts = task_module.split('.')
-        if len(task_parts) < 2:
-            raise SiliconCompilerError(
-                f"{task} is not a valid task, it must be associated with a tool '<tool>.<task>'.",
-                chip=self)
-        tool_name, task_name = task_parts[-2:]
-
-        # bind tool to node
-        self.set('flowgraph', flow, step, index, 'tool', tool_name)
-        self.set('flowgraph', flow, step, index, 'task', task_name)
-        self.set('flowgraph', flow, step, index, 'taskmodule', task_module)
-
-        # set default weights
-        for metric in self.getkeys('metric'):
-            self.set('flowgraph', flow, step, index, 'weight', metric, 0)
+            graph = self.schema.get("flowgraph", flow, field="schema")
+        graph.node(step, task, index=index)
 
     ###########################################################################
     def edge(self, flow, tail, head, tail_index=0, head_index=0):
@@ -3065,28 +2961,16 @@ class Chip:
             flow (str): Name of flow
             tail (str): Name of tail node
             head (str): Name of head node
-            tail_index (int): Index of tail node to connect
-            head_index (int): Index of head node to connect
+            tail_index (int/str): Index of tail node to connect
+            head_index (int/str): Index of head node to connect
 
         Examples:
             >>> chip.edge('place', 'cts')
             Creates a directed edge from place to cts.
         '''
-        head_index = str(head_index)
-        tail_index = str(tail_index)
 
-        for step in (head, tail):
-            if step in (Schema.GLOBAL_KEY, 'default'):
-                self.error(f'Illegal step name: {step} is reserved')
-                return
-
-        tail_node = (tail, tail_index)
-        if tail_node in self.get('flowgraph', flow, head, head_index, 'input'):
-            self.logger.warning(f'Edge from {tail}{tail_index} to {head}{head_index} already '
-                                'exists, skipping')
-            return
-
-        self.add('flowgraph', flow, head, head_index, 'input', tail_node)
+        graph = self.schema.get("flowgraph", flow, field="schema")
+        graph.edge(tail, head, tail_index=tail_index, head_index=head_index)
 
     ###########################################################################
     def remove_node(self, flow, step, index=None):
@@ -3096,40 +2980,14 @@ class Chip:
         Args:
             flow (str): Flow name
             step (str): Step name
-            index (int): Step index
+            index (int/str): Step index
         '''
 
         if flow not in self.getkeys('flowgraph'):
             raise ValueError(f'{flow} is not in the manifest')
 
-        if step not in self.getkeys('flowgraph', flow):
-            raise ValueError(f'{step} is not a valid step in {flow}')
-
-        if index is None:
-            # Iterate over all indexes
-            for index in self.getkeys('flowgraph', flow, step):
-                self.remove_node(flow, step, index)
-            return
-
-        index = str(index)
-        if index not in self.getkeys('flowgraph', flow, step):
-            raise ValueError(f'{index} is not a valid index for {step} in {flow}')
-
-        # Save input edges
-        node = (step, index)
-        node_inputs = self.get('flowgraph', flow, step, index, 'input')
-        self.remove('flowgraph', flow, step, index)
-
-        if len(self.getkeys('flowgraph', flow, step)) == 0:
-            self.remove('flowgraph', flow, step)
-
-        for flow_step in self.getkeys('flowgraph', flow):
-            for flow_index in self.getkeys('flowgraph', flow, flow_step):
-                inputs = self.get('flowgraph', flow, flow_step, flow_index, 'input')
-                if node in inputs:
-                    inputs = [inode for inode in inputs if inode != node]
-                    inputs.extend(node_inputs)
-                    self.set('flowgraph', flow, flow_step, flow_index, 'input', set(inputs))
+        graph = self.schema.get("flowgraph", flow, field="schema")
+        graph.remove_node(step, index=index)
 
     ###########################################################################
     def graph(self, flow, subflow, name=None):
@@ -3145,27 +3003,9 @@ class Chip:
             >>> chip.graph('asicflow')
             Instantiates a flow named 'asicflow'.
         '''
-        for step in self.getkeys('flowgraph', subflow):
-            # uniquify each step
-            if name is None:
-                newstep = step
-            else:
-                newstep = name + "." + step
-
-            for keys in self.allkeys('flowgraph', subflow, step):
-                val = self.get('flowgraph', subflow, step, *keys)
-                self.set('flowgraph', flow, newstep, *keys, val)
-
-            if name is None:
-                continue
-
-            for index in self.getkeys('flowgraph', flow, newstep):
-                # rename inputs
-                all_inputs = self.get('flowgraph', flow, newstep, index, 'input')
-                self.set('flowgraph', flow, newstep, index, 'input', [])
-                for in_step, in_index in all_inputs:
-                    newin = name + "." + in_step
-                    self.add('flowgraph', flow, newstep, index, 'input', (newin, in_index))
+        graph = self.schema.get("flowgraph", flow, field="schema")
+        subgraph = self.schema.get("flowgraph", subflow, field="schema")
+        graph.graph(subgraph, name=name)
 
     ###########################################################################
     def run(self, raise_exception=False):
@@ -3200,14 +3040,25 @@ class Chip:
             >>> run()
             Runs the execution flow defined by the flowgraph dictionary.
         '''
+        from siliconcompiler.remote.client import ClientScheduler
 
         try:
-            sc_runner(self)
+            if self.get('option', 'remote'):
+                scheduler = ClientScheduler(self)
+            else:
+                scheduler = Scheduler(self)
+            scheduler.run()
         except Exception as e:
             if raise_exception:
                 raise e
             self.logger.error(str(e))
             return False
+        finally:
+            # Update dashboard if running
+            if self._dash:
+                self._dash.update_manifest()
+                self._dash.end_of_run()
+
         return True
 
     ###########################################################################
@@ -3245,14 +3096,19 @@ class Chip:
             if sc_step and sc_index:
                 search_nodes.append((sc_step, sc_index))
             elif sc_step:
-                for check_step, check_index in nodes_to_execute(self, flow):
-                    if sc_step == check_step:
-                        search_nodes.append((check_step, check_index))
+                if flow is not None:
+                    runtime = RuntimeFlowgraph(
+                        self.schema.get("flowgraph", flow, field='schema'),
+                        from_steps=self.get('option', 'from'),
+                        to_steps=self.get('option', 'to'),
+                        prune_nodes=self.get('option', 'prune'))
+                    for check_step, check_index in runtime.get_nodes():
+                        if sc_step == check_step:
+                            search_nodes.append((check_step, check_index))
             else:
                 if flow is not None:
-                    for nodes in _get_flowgraph_execution_order(self,
-                                                                flow,
-                                                                reverse=True):
+                    for nodes in self.schema.get(
+                            "flowgraph", flow, field="schema").get_execution_order(reverse=True):
                         search_nodes.extend(nodes)
 
             for ext in self._showtools.keys():
@@ -3326,7 +3182,7 @@ class Chip:
         self.set('option', 'jobname', f'_{taskname}_{sc_job}_{sc_step}{sc_index}', clobber=True)
 
         # Setup in step/index variables
-        for (step, index) in _get_flowgraph_nodes(self, 'showflow'):
+        for step, index in self.get("flowgraph", "showflow", field="schema").get_nodes():
             if step != taskname:
                 continue
             show_tool, _ = get_tool_task(self, step, index, flow='showflow')
@@ -3348,7 +3204,8 @@ class Chip:
         try:
             self.run(raise_exception=True)
             if screenshot:
-                step, index = _get_flowgraph_exit_nodes(self, flow='showflow')[0]
+                step, index = self.schema.get("flowgraph", 'showflow',
+                                              field="schema").get_exit_nodes()[0]
                 success = self.find_result('png', step=step, index=index)
             else:
                 success = True
@@ -3426,8 +3283,8 @@ class Chip:
         if hasattr(self, 'logger'):
             self.logger.error(msg)
 
-        step = self.get('arg', 'step')
-        index = self.get('arg', 'index')
+        step = self.schema.get('arg', 'step')
+        index = self.schema.get('arg', 'index')
         if self.schema.get('option', 'continue', step=step, index=index):
             self._error = True
             return
@@ -3459,4 +3316,3 @@ class Chip:
 
         # Reinitialize logger on restore
         self._init_logger()
-        self.schema._init_logger(self.logger)

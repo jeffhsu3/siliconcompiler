@@ -10,7 +10,7 @@ import os.path
 from collections.abc import Container
 from pathlib import Path
 import siliconcompiler
-from siliconcompiler.scheduler import _get_machine_info
+from siliconcompiler import RecordSchema
 
 
 class ChoiceOptional(Container):
@@ -42,6 +42,13 @@ def install_tool(tool, script, build_dir, prefix):
     # setup environment
     env = os.environ.copy()
     env["PREFIX"] = prefix
+    env["USE_SUDO_INSTALL"] = "no"
+    try:
+        os.makedirs(prefix, exist_ok=True)
+    except PermissionError:
+        env["USE_SUDO_INSTALL"] = "yes"
+    if not os.access(prefix, os.W_OK):
+        env["USE_SUDO_INSTALL"] = "yes"
 
     # run
     ret = subprocess.call(script, env=env, cwd=build_dir)
@@ -71,7 +78,7 @@ def show_tool(tool, script):
 
 
 def _get_os_name():
-    machine_info = _get_machine_info()
+    machine_info = RecordSchema.get_machine_information()
     system = machine_info.get('system', "").lower()
     if system == 'linux':
         distro = machine_info.get('distro', "").lower()
@@ -91,7 +98,7 @@ def _get_os_name():
 
 
 def print_machine_info():
-    machine_info = _get_machine_info()
+    machine_info = RecordSchema.get_machine_information()
     mapped_os = _get_os_name()
 
     print("System:   ", machine_info.get('system', None))
@@ -139,8 +146,8 @@ def _get_tools_list():
 
 def _recommended_tool_groups(tools):
     groups = {
-        "asic": {"surelog", "sv2v", "yosys", "openroad", "klayout"},
-        "fpga": {"surelog", "sv2v", "yosys", "vpr"},
+        "asic": {"sv2v", "yosys", "openroad", "klayout"},
+        "fpga": {"sv2v", "yosys", "vpr"},
         "digital-simulation": {"verilator", "icarus", "gtkwave"},
         "analog-simulation": {"xyce"}
     }
@@ -162,7 +169,13 @@ class HelpFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescript
 
 def main():
     progname = "sc-install"
-    description = """
+
+    tools = _get_tools_list()
+    group_desc = "\n".join(
+        [f"    {grp}: {', '.join(grp_tools)}"
+         for grp, grp_tools in _recommended_tool_groups(tools).items()])
+
+    description = f"""
 -----------------------------------------------------------
 SC app install supported tools.
 
@@ -187,13 +200,15 @@ To show the install script:
 To system debugging information (this should only be used to debug):
     sc-install -debug_machine
 -----------------------------------------------------------
+Tool groups:
+{group_desc}
+-----------------------------------------------------------
 """
+
     parser = argparse.ArgumentParser(
         prog=progname,
         description=description,
         formatter_class=HelpFormatter)
-
-    tools = _get_tools_list()
 
     if _get_os_name() is None:
         print("Unsupported operating system", file=sys.stderr)

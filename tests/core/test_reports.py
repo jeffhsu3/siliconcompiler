@@ -1,6 +1,5 @@
 from siliconcompiler.report import report
 from siliconcompiler import Chip
-from siliconcompiler import Schema
 from siliconcompiler.targets import freepdk45_demo
 import os
 from pathlib import Path
@@ -45,6 +44,12 @@ def test_make_manifest_branches():
     branches in the schema excluding branches with key 'default' are in the
     manifest returned by make_manifest.
     '''
+
+    def _is_leaf(cfg):
+        # 'shorthelp' chosen arbitrarily: any mandatory field with a consistent
+        # type would work.
+        return 'shorthelp' in cfg and isinstance(cfg['shorthelp'], str)
+
     chip = Chip(design='')
     chip.set('option', 'flow', "asicflow")
     chip.set('record', 'distro', '8', step='import', index='1')
@@ -60,7 +65,7 @@ def test_make_manifest_branches():
         # all keys in the actual manifest are in the test except for keys in
         # the leaf or keys called 'default'
         for manifest_key in manifest[key]:
-            if Schema._is_leaf(manifest[key]) or manifest_key == 'default':
+            if _is_leaf(manifest[key]) or manifest_key == 'default':
                 continue
             make_manifest_testing_helper(manifest[key],
                                          test_manifest[key],
@@ -68,7 +73,7 @@ def test_make_manifest_branches():
 
     test = report.make_manifest(chip)
     for key in chip.getkeys():
-        make_manifest_testing_helper(chip.schema.cfg, test, key)
+        make_manifest_testing_helper(chip.schema.getdict(), test, key)
 
 
 def test_make_manifest_leaves():
@@ -312,11 +317,13 @@ def test_get_metrics_source():
     chip = Chip(design='')
     chip.use(freepdk45_demo)
     chip.set('tool', 'openroad', 'task', 'pin_placement', 'report',
-             'metric', 'this file', step='floorplan.pin_placement', index='0')
+             'metric', ['this file', 'that file'],
+             step='floorplan.pin_placement', index='0')
 
-    test = report.get_metrics_source(chip, 'floorplan.pin_placement', '0')
+    primary, sources = report.get_metrics_source(chip, 'floorplan.pin_placement', '0')
 
-    assert test == {'this file': ['metric']}
+    assert primary == {'this file': ['metric']}
+    assert sources == {'this file': ['metric'], 'that file': ['metric']}
 
 
 def add_file_to_reports(filepath, chip):

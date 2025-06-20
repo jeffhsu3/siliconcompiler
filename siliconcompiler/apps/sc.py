@@ -12,14 +12,14 @@ from siliconcompiler import SiliconCompilerError
 
 def _infer_designname(chip):
     topfile = None
-    sourcesets = chip.getkeys('input')
+    sourcesets = list(chip.getkeys('input'))
     for sourceset in reversed(('rtl', 'hll')):
         if sourceset in sourcesets:
             sourcesets.remove(sourceset)
             sourcesets.insert(0, sourceset)
     for sourceset in sourcesets:
         for filetype in chip.getkeys('input', sourceset):
-            all_vals = chip.schema._getvals('input', sourceset, filetype)
+            all_vals = chip.schema.get('input', sourceset, filetype, field=None).getvalues()
             if all_vals:
                 # just look at first value
                 sources, _, _ = all_vals[0]
@@ -99,6 +99,7 @@ def main():
 
         # Print Job Summary
         chip.summary()
+        chip.snapshot()
     except SiliconCompilerError:
         return 1
     except Exception as e:

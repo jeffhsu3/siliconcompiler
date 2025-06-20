@@ -103,7 +103,7 @@ def runtime_options(chip):
 
     design = chip.top()
 
-    runMain = ["runMain"]
+    run_main = ["runMain"]
     if chip.valid('input', 'config', 'chisel') and \
        chip.get('input', 'config', 'chisel', step=step, index=index):
         app = design
@@ -112,23 +112,23 @@ def runtime_options(chip):
             app = chip.get('tool', tool, 'task', task, 'var', 'application',
                            step=step, index=index)[0]
 
-        runMain.append(f"{app}")
+        run_main.append(f"{app}")
 
         if chip.valid('tool', tool, 'task', task, 'var', 'argument') and \
            chip.get('tool', tool, 'task', task, 'var', 'argument', step=step, index=index):
-            runMain.extend(chip.get('tool', tool, 'task', task, 'var', 'argument',
-                                    step=step, index=index))
-        runMain.append("--")
+            run_main.extend(chip.get('tool', tool, 'task', task, 'var', 'argument',
+                                     step=step, index=index))
+        run_main.append("--")
 
-        runMain.append("--target-dir chisel-output")
+        run_main.extend(["--target-dir", "chisel-output"])
     else:
         # Use built in driver
-        runMain.append("SCDriver")
-        runMain.append(f"--module {chip.top(step=step, index=index)}")
+        run_main.append("SCDriver")
+        run_main.extend(["--module", chip.top(step=step, index=index)])
 
-        runMain.append(f"--output-file ../outputs/{design}.v")
+        run_main.extend(["--output-file", f"../outputs/{design}.v"])
 
-    return [f'"{" ".join(runMain)}"']
+    return [" ".join(run_main)]
 
 
 def post_process(chip):

@@ -23,6 +23,9 @@ flow = 'synparallel'
 # create import node
 chip.node(flow, 'import', parse)
 
+# create node for optimized (or minimum in this case) metric
+chip.node(flow, 'synmin', minimum)
+
 # create node for each syn strategy (first node called import and last node called synmin)
 # and connect all synth nodes to both the first node and last node
 for index in range(len(syn_strategies)):
@@ -36,8 +39,6 @@ for index in range(len(syn_strategies)):
     for metric in ('cellarea', 'peakpower', 'standbypower'):
         chip.set('flowgraph', flow, 'syn', str(index), 'weight', metric, 1.0)
 
-# create node for optimized (or minimum in this case) metric
-chip.node(flow, 'synmin', minimum)
 
 chip.set('option', 'flow', flow)
 chip.write_flowgraph("flowgraph_doe.svg")

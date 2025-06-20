@@ -20,13 +20,12 @@ def __check_gcd(chip):
                     step='syn', index='0') == ['reports/stat.json']
 
     # "No timescale set..."
-    assert chip.get('metric', 'warnings', step='import.verilog', index='0') == 10
+    assert chip.get('metric', 'warnings', step='import.verilog', index='0') == 7
 
     # 2 ABC Warnings
     assert chip.get('metric', 'warnings', step='syn', index='0') == 2
 
-    # Warning: *. (x3)
-    assert chip.get('metric', 'warnings', step='floorplan.init', index='0') == 3
+    assert chip.get('metric', 'warnings', step='floorplan.init', index='0') == 1
 
     assert chip.get('metric', 'warnings', step='place.detailed', index='0') == 0
 
@@ -93,11 +92,13 @@ def test_sh_run(examples_root, run_cli):
 @pytest.mark.timeout(900)
 def test_py_gcd_skywater():
     from gcd import gcd_skywater
-    gcd_skywater.main()
+
+    assert gcd_skywater.main() == 0
 
     assert os.path.isfile('build/gcd/rtl2gds/write.gds/0/outputs/gcd.gds')
+    assert os.path.isfile('gcd.checked.pkg.json')
 
-    manifest = 'build/gcd/signoff/signoff/0/outputs/gcd.pkg.json'
+    manifest = 'gcd.checked.pkg.json'
     assert os.path.isfile(manifest)
 
     chip = siliconcompiler.Chip('gcd')
@@ -166,3 +167,20 @@ def test_py_gcd_sta():
 
     manifest = 'build/gcd/job0/gcd.pkg.json'
     assert os.path.isfile(manifest)
+
+
+@pytest.mark.eda
+@pytest.mark.quick
+@pytest.mark.timeout(300)
+def test_py_gcd_ihp130():
+    from gcd import gcd_ihp130
+    gcd_ihp130.main()
+
+    assert os.path.isfile('build/gcd/job0/write.gds/0/outputs/gcd.gds')
+    assert os.path.isfile('build/gcd/signoff/drc/0/outputs/gcd.lyrdb')
+
+    manifest = 'build/gcd/signoff/convert/0/outputs/gcd.pkg.json'
+    chip = siliconcompiler.Chip('gcd')
+    chip.read_manifest(manifest)
+    # DRCs are density and fantom enclosure rules at the block pins
+    assert chip.get('metric', 'drcs', step='drc', index='0') == 13

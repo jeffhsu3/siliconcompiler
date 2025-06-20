@@ -1,576 +1,895 @@
-import os
-import math
-from siliconcompiler import SiliconCompilerError, NodeStatus
-from siliconcompiler.tools._common import input_file_node_name, get_tool_task
+import inspect
+
+from siliconcompiler import Schema
+from siliconcompiler.schema import BaseSchema, NamedSchema
+from siliconcompiler.schema import EditableSchema, Parameter, Scope
+from siliconcompiler.schema.utils import trim
+
+from siliconcompiler import NodeStatus
 
 
-def _nodes_to_execute(chip, flow, from_nodes, to_nodes, prune_nodes):
-    '''
-    Assumes a flowgraph with valid edges for the inputs
-    '''
-    nodes_to_execute = []
-    for from_node in from_nodes:
-        for node in _nodes_to_execute_recursive(chip, flow, from_node, to_nodes, prune_nodes):
-            if node not in nodes_to_execute:
-                nodes_to_execute.append(node)
-    return nodes_to_execute
+class FlowgraphSchema(NamedSchema):
+    def __init__(self, name):
+        super().__init__(name=name)
 
+        schema = EditableSchema(self)
+        schema.insert("default", "default", FlowgraphNodeSchema())
 
-def _nodes_to_execute_recursive(chip, flow, from_node, to_nodes, prune_nodes, path=[]):
-    path = path.copy()
-    nodes_to_execute = []
+        self.__clear_cache()
 
-    if from_node in prune_nodes:
-        return []
-    if from_node in path:
-        raise SiliconCompilerError(f'Path {path} would form a circle with {from_node}')
-    path.append(from_node)
+    def __clear_cache(self):
+        '''
+        Clear the cache of node information
+        '''
 
-    if from_node in to_nodes:
-        for node in path:
-            nodes_to_execute.append(node)
-    for output_node in _get_flowgraph_node_outputs(chip, flow, from_node):
-        for node in _nodes_to_execute_recursive(chip, flow, output_node, to_nodes,
-                                                prune_nodes, path=path):
-            if node not in nodes_to_execute:
-                nodes_to_execute.append(node)
+        self.__cache_nodes = None
+        self.__cache_nodes_entry = None
+        self.__cache_nodes_exit = None
+        self.__cache_execution_order_forward = None
+        self.__cache_execution_order_reverse = None
 
-    return nodes_to_execute
+        self.__cache_node_outputs = None
 
+    def node(self, step, task, index=0):
+        '''
+        Creates a flowgraph node.
 
-def _unreachable_steps_to_execute(chip, flow, cond=lambda _: True):
-    from_nodes = set(_get_execution_entry_nodes(chip, flow))
-    to_nodes = set(_get_execution_exit_nodes(chip, flow))
-    prune_nodes = chip.get('option', 'prune')
-    reachable_nodes = set(_reachable_flowgraph_nodes(chip, flow, from_nodes, cond=cond,
-                                                     prune_nodes=prune_nodes))
-    unreachable_nodes = to_nodes.difference(reachable_nodes)
-    unreachable_steps = set()
-    for unreachable_node in unreachable_nodes:
-        if not any(filter(lambda node: node[0] == unreachable_node[0], reachable_nodes)):
-            unreachable_steps.add(unreachable_node[0])
-    return unreachable_steps
+        Creates a flowgraph node by binding a step to a tool specific task.
+        A tool can be an external executable or one of the built in functions
+        in the SiliconCompiler framework). Built in functions include: minimum,
+        maximum, join, mux, verify.
 
+        The method modifies the following schema parameters:
 
-def _reachable_flowgraph_nodes(chip, flow, from_nodes, cond=lambda _: True, prune_nodes=[]):
-    visited_nodes = set()
-    current_nodes = from_nodes.copy()
-    while current_nodes:
-        current_nodes_copy = current_nodes.copy()
-        for current_node in current_nodes_copy:
-            if current_node in prune_nodes:
-                current_nodes.remove(current_node)
-                continue
-            if cond(current_node):
-                visited_nodes.add(current_node)
-                current_nodes.remove(current_node)
-                outputs = _get_flowgraph_node_outputs(chip, flow, current_node)
-                current_nodes.update(outputs)
-        if current_nodes == current_nodes_copy:
-            break
-    return visited_nodes
+        * [<step>,<index>,tool,<tool>]
+        * [<step>,<index>,task,<task>]
+        * [<step>,<index>,taskmodule,<taskmodule>]
 
+        Args:
+            step (str): Step name
+            task (module/str): Task to associate with this node
+            index (int/str): Step index
 
-def _get_flowgraph_node_inputs(chip, flow, node):
-    step, index = node
-    inputs = set()
-    for in_node in chip.get('flowgraph', flow, step, index, 'input'):
-        if chip.get('record', 'status', step=in_node[0], index=in_node[1]) == \
-                NodeStatus.SKIPPED:
-            inputs.update(_get_flowgraph_node_inputs(chip, flow, in_node))
+        Examples:
+            >>> import siliconcomiler.tools.openroad.place as place
+            >>> flow.node('apr_place', place, index=0)
+            Creates a 'place' task with step='apr_place' and index=0 and binds it to the
+            'openroad' tool.
+        '''
+
+        if step in (Schema.GLOBAL_KEY, 'default', 'sc_collected_files'):
+            raise ValueError(f"{step} is a reserved name")
+
+        index = str(index)
+        if index in (Schema.GLOBAL_KEY, 'default'):
+            raise ValueError(f"{index} is a reserved name")
+
+        # Determine task name and module
+        task_module = None
+        if isinstance(task, str):
+            task_module = task
+        elif inspect.ismodule(task):
+            task_module = task.__name__
         else:
-            inputs.add(in_node)
-    return list(inputs)
+            raise ValueError(f"{task} is not a string or module and cannot be used to "
+                             "setup a task.")
 
+        task_parts = task_module.split('.')
+        if len(task_parts) < 2:
+            raise ValueError(f"{task} is not a valid task, it must be associated with "
+                             "a tool '<tool>.<task>'.")
 
-def _get_pruned_flowgraph_nodes(chip, flow, prune_nodes):
-    # Ignore option from/to, we want reachable nodes of the whole flowgraph
-    from_nodes = set(_get_flowgraph_entry_nodes(chip, flow))
-    return _reachable_flowgraph_nodes(chip, flow, from_nodes, prune_nodes=prune_nodes)
+        tool_name, task_name = task_parts[-2:]
 
+        # bind tool to node
+        self.set(step, index, 'tool', tool_name)
+        self.set(step, index, 'task', task_name)
+        self.set(step, index, 'taskmodule', task_module)
 
-def _get_pruned_node_inputs(chip, flow, node):
-    prune_nodes = chip.get('option', 'prune')
-    pruned_flowgraph_nodes = _get_pruned_flowgraph_nodes(chip, flow, prune_nodes)
-    return list(filter(lambda node: node in pruned_flowgraph_nodes,
-                       _get_flowgraph_node_inputs(chip, flow, node)))
+        self.__clear_cache()
 
+    def edge(self, tail, head, tail_index=0, head_index=0):
+        '''
+        Creates a directed edge from a tail node to a head node.
 
-def _get_flowgraph_node_outputs(chip, flow, node):
-    node_outputs = []
+        Connects the output of a tail node with the input of a head node by
+        setting the 'input' field of the head node in the schema flowgraph.
 
-    iter_nodes = _get_flowgraph_nodes(chip, flow)
-    for iter_node in iter_nodes:
-        iter_node_inputs = chip.get('flowgraph', flow, *iter_node, 'input')
-        if node in iter_node_inputs:
-            node_outputs.append(iter_node)
+        The method modifies the following parameters:
 
-    return node_outputs
+        [<head>,<head_index>,input]
 
+        Args:
+            tail (str): Name of tail node
+            head (str): Name of head node
+            tail_index (int/str): Index of tail node to connect
+            head_index (int/str): Index of head node to connect
 
-def _get_flowgraph_nodes(chip, flow, steps=None, indices=None):
-    nodes = []
-    for step in chip.getkeys('flowgraph', flow):
-        if steps and step not in steps:
-            continue
-        for index in chip.getkeys('flowgraph', flow, step):
-            if indices and index not in indices:
+        Examples:
+            >>> chip.edge('place', 'cts')
+            Creates a directed edge from place to cts.
+        '''
+        head_index = str(head_index)
+        tail_index = str(tail_index)
+
+        for step, index in [(head, head_index), (tail, tail_index)]:
+            if not self.valid(step, index):
+                raise ValueError(f"{step}{index} is not a defined node in {self.name()}.")
+
+        tail_node = (tail, tail_index)
+        if tail_node in self.get(head, head_index, 'input'):
+            return
+
+        self.add(head, head_index, 'input', tail_node)
+
+        self.__clear_cache()
+
+    def remove_node(self, step, index=None):
+        '''
+        Remove a flowgraph node.
+
+        Args:
+            step (str): Step name
+            index (int/str): Step index
+        '''
+
+        if step not in self.getkeys():
+            raise ValueError(f'{step} is not a valid step in {self.name()}')
+
+        if index is None:
+            # Iterate over all indexes
+            for index in self.getkeys(step):
+                self.remove_node(step, index)
+            return
+
+        index = str(index)
+        if index not in self.getkeys(step):
+            raise ValueError(f'{index} is not a valid index for {step} in {self.name()}')
+
+        # Save input edges
+        node = (step, index)
+        node_inputs = self.get(step, index, 'input')
+
+        # remove node
+        self.remove(step, index)
+
+        # remove step if all nodes a gone
+        if len(self.getkeys(step)) == 0:
+            self.remove(step)
+
+        for flow_step in self.getkeys():
+            for flow_index in self.getkeys(flow_step):
+                inputs = self.get(flow_step, flow_index, 'input')
+                if node in inputs:
+                    inputs = [inode for inode in inputs if inode != node]
+                    inputs.extend(node_inputs)
+                    self.set(flow_step, flow_index, 'input', sorted(set(inputs)))
+
+        self.__clear_cache()
+
+    def insert_node(self, step, task, before_step, index=0, before_index=0):
+        '''
+        Insert a new node after the specified node
+
+        Args:
+            step (str): Step name
+            index (int/str): Step index
+            task (module/str): Task to associate with this node
+            before_step (str): name of step to insert task after
+            before_index (int/str): index of step to insert task after
+        '''
+
+        index = str(index)
+        before_index = str(before_index)
+
+        if (before_step, before_index) not in self.get_nodes():
+            raise ValueError(f'{before_step}{before_index} is not a valid node in {self.name()}')
+
+        # add the node
+        self.node(step, task, index=index)
+
+        # rewire
+        for istep, iindex in self.get_node_outputs(before_step, before_index):
+            inputs = self.get(istep, iindex, "input")
+            inputs.remove((before_step, before_index))
+            self.set(istep, iindex, "input", inputs)
+            self.add(istep, iindex, "input", (step, index))
+        self.set(step, index, "input", [(before_step, before_index)])
+
+        self.__clear_cache()
+
+    ###########################################################################
+    def graph(self, subflow, name=None):
+        '''
+        Instantiates a named flow as a graph in the current flowgraph.
+
+        Args:
+            subflow (str): Name of flow to instantiate
+            name (str): Name of instance
+
+        Examples:
+            >>> chip.graph(asicflow)
+            Instantiates a flow named 'asicflow'.
+        '''
+        if not isinstance(subflow, FlowgraphSchema):
+            raise ValueError(f"subflow must a FlowgraphSchema, not: {type(subflow)}")
+
+        for step in subflow.getkeys():
+            # uniquify each step
+            if name is None:
+                newstep = step
+            else:
+                newstep = name + "." + step
+
+            if newstep in self.getkeys():
+                raise ValueError(f"{newstep} is already defined")
+
+            # forward information
+            for keys in subflow.allkeys(step):
+                self.set(newstep, *keys, subflow.get(step, *keys))
+
+            if name is None:
                 continue
-            nodes.append((step, index))
-    return nodes
+
+            # rename inputs
+            for index in self.getkeys(newstep):
+                all_inputs = self.get(newstep, index, 'input')
+                self.set(newstep, index, 'input', [])
+                for in_step, in_index in all_inputs:
+                    newin = name + "." + in_step
+                    self.add(newstep, index, 'input', (newin, in_index))
+
+        self.__clear_cache()
+
+    def get_nodes(self):
+        '''
+        Returns all the nodes defined in this flowgraph
+        '''
+        if self.__cache_nodes is not None:
+            return self.__cache_nodes
+
+        nodes = []
+        for step in self.getkeys():
+            for index in self.getkeys(step):
+                nodes.append((step, index))
+
+        self.__cache_nodes = tuple(sorted(set(nodes)))
+
+        return self.__cache_nodes
+
+    def get_entry_nodes(self):
+        '''
+        Collect all step/indices that represent the entry
+        nodes for the flowgraph
+        '''
+
+        if self.__cache_nodes_entry is not None:
+            return self.__cache_nodes_entry
+
+        nodes = []
+        for step, index in self.get_nodes():
+            if not self.get(step, index, 'input'):
+                nodes.append((step, index))
+
+        self.__cache_nodes_entry = tuple(sorted(set(nodes)))
+
+        return self.__cache_nodes_entry
+
+    def get_exit_nodes(self):
+        '''
+        Collect all step/indices that represent the exit
+        nodes for the flowgraph
+        '''
+
+        if self.__cache_nodes_exit is not None:
+            return self.__cache_nodes_exit
+
+        inputnodes = []
+        for step, index in self.get_nodes():
+            inputnodes.extend(self.get(step, index, 'input'))
+        nodes = []
+        for step, index in self.get_nodes():
+            if (step, index) not in inputnodes:
+                nodes.append((step, index))
+
+        self.__cache_nodes_exit = tuple(sorted(set(nodes)))
+
+        return self.__cache_nodes_exit
+
+    def get_execution_order(self, reverse=False):
+        '''
+        Generates a list of nodes in the order they will be executed.
+
+        Args:
+            reverse (boolean): if True, the nodes will be ordered from exit nodes
+                to entry nodes.
+        '''
+
+        if reverse:
+            if self.__cache_execution_order_reverse is not None:
+                return self.__cache_execution_order_reverse
+        else:
+            if self.__cache_execution_order_forward is not None:
+                return self.__cache_execution_order_forward
+
+        # Generate execution edges lookup map
+        ex_map = {}
+        for step, index in self.get_nodes():
+            for istep, iindex in self.get(step, index, 'input'):
+                if reverse:
+                    ex_map.setdefault((step, index), set()).add((istep, iindex))
+                else:
+                    ex_map.setdefault((istep, iindex), set()).add((step, index))
+
+        rev_ex_map = {}
+        for node, edges in ex_map.items():
+            for step, index in edges:
+                rev_ex_map.setdefault((step, index), set()).add(node)
+
+        # Collect execution order of nodes
+        if reverse:
+            order = [set(self.get_exit_nodes())]
+        else:
+            order = [set(self.get_entry_nodes())]
+
+        visited = set()
+        while True:
+            next_level = set()
+            next_visited = set()
+            for step, index in sorted(order[-1]):
+                if (step, index) not in rev_ex_map:
+                    # No edges so assume inputs are okay
+                    inputs_valid = True
+                else:
+                    inputs_valid = all([node in visited for node in rev_ex_map[(step, index)]])
+
+                if inputs_valid:
+                    next_visited.add((step, index))
+                    if (step, index) in ex_map:
+                        next_level.update(ex_map.pop((step, index)))
+                else:
+                    next_level.add((step, index))
+
+            visited.update(next_visited)
+
+            if not next_level:
+                break
+
+            order.append(next_level)
+
+        # Filter duplicates from flow
+        used_nodes = set()
+        exec_order = []
+        order.reverse()
+        for n, level_nodes in enumerate(order):
+            exec_order.append(list(level_nodes.difference(used_nodes)))
+            used_nodes.update(level_nodes)
+
+        exec_order.reverse()
+
+        ordering = tuple([tuple(sorted(level)) for level in exec_order])
+
+        if reverse:
+            self.__cache_execution_order_reverse = ordering
+            return self.__cache_execution_order_reverse
+        else:
+            self.__cache_execution_order_forward = ordering
+            return self.__cache_execution_order_forward
+
+    def get_node_outputs(self, step, index):
+        '''
+        Returns the nodes the given nodes provides input to.
+
+        Args:
+            step (str): step name
+            index (str/int) index name
+        '''
+
+        index = str(index)
+
+        if (step, index) not in self.get_nodes():
+            raise ValueError(f"{step}{index} is not a valid node")
+
+        if self.__cache_node_outputs is not None:
+            return self.__cache_node_outputs[(step, index)]
+
+        self.__cache_node_outputs = {}
+
+        input_map = {}
+        for istep, iindex in self.get_nodes():
+            input_map[(istep, iindex)] = self.get(istep, iindex, 'input')
+            self.__cache_node_outputs[(istep, iindex)] = set()
+
+        for src_node, dst_nodes in input_map.items():
+            for dst_node in dst_nodes:
+                if dst_node not in self.__cache_node_outputs:
+                    self.__cache_node_outputs[dst_node] = set()
+                self.__cache_node_outputs[dst_node].add(src_node)
+
+        self.__cache_node_outputs = {
+            node: tuple(sorted(outputs)) for node, outputs in self.__cache_node_outputs.items()
+        }
+
+        return self.__cache_node_outputs[(step, index)]
+
+    def __find_loops(self, step, index, path=None):
+        '''
+        Search for loops in the graph.
+
+        Args:
+            step (str): step name to start from
+            index (str) index name to start from
+            path (list of nodes): path in graph so far
+        '''
+        if path is None:
+            path = []
+
+        if (step, index) in path:
+            path.append((step, index))
+            return path
+
+        path.append((step, index))
+
+        for ostep, oindex in self.get_node_outputs(step, index):
+            loop_path = self.__find_loops(ostep, oindex, path=path.copy())
+            if loop_path:
+                return loop_path
+
+        return None
+
+    def validate(self, logger=None):
+        '''
+        Check if flowgraph is valid.
+
+        * Checks if all edges have valid nodes
+        * Checks that there are no duplicate edges
+        * Checks if nodes are defined properly
+        * Checks if there are any loops present in the graph
+
+        Returns True if valid, False otherwise.
+
+        Args:
+            logger (logging.Logger): logger to use for reporting
+        '''
+
+        error = False
+
+        check_nodes = set()
+        for step, index in self.get_nodes():
+            check_nodes.add((step, index))
+            input_nodes = self.get(step, index, 'input')
+            check_nodes.update(input_nodes)
+
+            for node in set(input_nodes):
+                if input_nodes.count(node) > 1:
+                    in_step, in_index = node
+                    if logger:
+                        logger.error(f'Duplicate edge from {in_step}{in_index} to '
+                                     f'{step}{index} in the {self.name()} flowgraph')
+                    error = True
+
+        diff_nodes = check_nodes.difference(self.get_nodes())
+        if diff_nodes:
+            if logger:
+                for step, index in diff_nodes:
+                    logger.error(f'{step}{index} is missing in the {self.name()} flowgraph')
+            error = True
+
+        # Detect missing definitions
+        for step, index in self.get_nodes():
+            for item in ('tool', 'task', 'taskmodule'):
+                if not self.get(step, index, item):
+                    if logger:
+                        logger.error(f'{step}{index} is missing a {item} definition in the '
+                                     f'{self.name()} flowgraph')
+                    error = True
+
+        # detect loops
+        for start_step, start_index in self.get_entry_nodes():
+            loop_path = self.__find_loops(start_step, start_index)
+            if loop_path:
+                error = True
+                if logger:
+                    loop_path = [f"{step}{index}" for step, index in loop_path]
+                    logger.error(f"{' -> '.join(loop_path)} forms a loop in {self.name()}")
+
+        return not error
 
 
-#######################################
-def _get_execution_entry_nodes(chip, flow):
-    if chip.get('arg', 'step') and chip.get('arg', 'index'):
-        return [(chip.get('arg', 'step'), chip.get('arg', 'index'))]
-    if chip.get('arg', 'step'):
-        return _get_flowgraph_nodes(chip, flow, steps=[chip.get('arg', 'step')])
-    # If we explicitly get the nodes for a flow other than the current one,
-    # Ignore the 'option' 'from'
-    if chip.get('option', 'flow') == flow and chip.get('option', 'from'):
-        return _get_flowgraph_nodes(chip, flow, steps=chip.get('option', 'from'))
-    return _get_flowgraph_entry_nodes(chip, flow)
-
-
-def _get_flowgraph_entry_nodes(chip, flow, steps=None):
+class RuntimeFlowgraph:
     '''
-    Collect all step/indices that represent the entry
-    nodes for the flowgraph
+    Runtime representation of a flowgraph
+
+    Args:
+        base (:class:`FlowgraphSchema`): base flowgraph for this runtime
+        args (tuple of step, index): specific node to apply runtime to
+        from_steps (list of steps): steps to start the runtime from
+        to_steps (list of steps): step to end the runtime at
+        prune_nodes (list of nodes): nodes to remove from execution
     '''
-    nodes = []
-    for (step, index) in _get_flowgraph_nodes(chip, flow, steps=steps):
-        if not chip.get('flowgraph', flow, step, index, 'input'):
-            nodes.append((step, index))
-    return nodes
+    def __init__(self, base, args=None, from_steps=None, to_steps=None, prune_nodes=None):
+        if not all([hasattr(base, attr) for attr in dir(FlowgraphSchema)]):
+            raise ValueError(f"base must a FlowgraphSchema, not: {type(base)}")
 
+        self.__base = base
 
-def _get_execution_exit_nodes(chip, flow):
-    if chip.get('arg', 'step') and chip.get('arg', 'index'):
-        return [(chip.get('arg', 'step'), chip.get('arg', 'index'))]
-    if chip.get('arg', 'step'):
-        return _get_flowgraph_nodes(chip, flow, steps=[chip.get('arg', 'step')])
-    # If we explicitly get the nodes for a flow other than the current one,
-    # Ignore the 'option' 'to'
-    if chip.get('option', 'flow') == flow and chip.get('option', 'to'):
-        return _get_flowgraph_nodes(chip, flow, steps=chip.get('option', 'to'))
-    return _get_flowgraph_exit_nodes(chip, flow)
+        if args and args[0] is not None:
+            from_steps = None
+            to_steps = None
+            prune_nodes = None
 
-
-#######################################
-def _get_flowgraph_exit_nodes(chip, flow, steps=None):
-    '''
-    Collect all step/indices that represent the exit
-    nodes for the flowgraph
-    '''
-    inputnodes = []
-    for (step, index) in _get_flowgraph_nodes(chip, flow, steps=steps):
-        inputnodes.extend(chip.get('flowgraph', flow, step, index, 'input'))
-    nodes = []
-    for (step, index) in _get_flowgraph_nodes(chip, flow, steps=steps):
-        if (step, index) not in inputnodes:
-            nodes.append((step, index))
-    return nodes
-
-
-#######################################
-def _get_flowgraph_execution_order(chip, flow, reverse=False):
-    '''
-    Generates a list of nodes in the order they will be executed.
-    '''
-
-    # Generate execution edges lookup map
-    ex_map = {}
-    for step, index in _get_flowgraph_nodes(chip, flow):
-        for istep, iindex in chip.get('flowgraph', flow, step, index, 'input'):
-            if reverse:
-                ex_map.setdefault((step, index), set()).add((istep, iindex))
+            step, index = args
+            if index is None:
+                self.__from = [(step, index) for index in self.__base.getkeys(step)]
             else:
-                ex_map.setdefault((istep, iindex), set()).add((step, index))
-
-    rev_ex_map = {}
-    for node, edges in ex_map.items():
-        for step, index in edges:
-            rev_ex_map.setdefault((step, index), set()).add(node)
-
-    # Collect execution order of nodes
-    if reverse:
-        order = [set(_get_flowgraph_exit_nodes(chip, flow))]
-    else:
-        order = [set(_get_flowgraph_entry_nodes(chip, flow))]
-
-    visited = set()
-    while True:
-        next_level = set()
-        next_visited = set()
-        for step, index in sorted(order[-1]):
-            if (step, index) not in rev_ex_map:
-                # No edges so assume inputs are okay
-                inputs_valid = True
+                self.__from = [(step, index)]
+            self.__to = self.__from
+        else:
+            if from_steps:
+                self.__from = []
+                for step in from_steps:
+                    try:
+                        self.__from.extend([(step, index) for index in self.__base.getkeys(step)])
+                    except KeyError:
+                        pass
             else:
-                inputs_valid = all([node in visited for node in rev_ex_map[(step, index)]])
+                self.__from = self.__base.get_entry_nodes()
 
-            if inputs_valid:
-                next_visited.add((step, index))
-                if (step, index) in ex_map:
-                    next_level.update(ex_map.pop((step, index)))
+            if to_steps:
+                self.__to = []
+                for step in to_steps:
+                    try:
+                        self.__to.extend([(step, index) for index in self.__base.getkeys(step)])
+                    except KeyError:
+                        pass
             else:
-                next_level.add((step, index))
+                self.__to = self.__base.get_exit_nodes()
 
-        visited.update(next_visited)
+        self.__from = sorted(set(self.__from))
+        self.__to = sorted(set(self.__to))
 
-        if not next_level:
-            break
+        if not prune_nodes:
+            prune_nodes = set()
+        self.__prune = sorted(set(prune_nodes))
 
-        order.append(next_level)
+        # remove pruned from and tos
+        self.__from = [node for node in self.__from if node not in self.__prune]
+        self.__to = [node for node in self.__to if node not in self.__prune]
 
-    # Filter duplicates from flow
-    used_nodes = set()
-    exec_order = []
-    order.reverse()
-    for n, level_nodes in enumerate(order):
-        exec_order.append(list(level_nodes.difference(used_nodes)))
-        used_nodes.update(level_nodes)
+        self.__compute_graph()
 
-    exec_order.reverse()
+    def __walk_graph(self, node, path=None, reverse=True):
+        if node in self.__prune:
+            return set()
 
-    return [sorted(level) for level in exec_order]
+        if path is None:
+            path = []
 
+        if node in path:
+            return set(path)
 
-def get_executed_nodes(chip, flow):
-    from_nodes = _get_flowgraph_entry_nodes(chip, flow)
-    return get_nodes_from(chip, flow, from_nodes)
+        path.append(node)
+        if reverse:
+            if node in self.__from:
+                return set(path)
+        else:
+            if node in self.__to:
+                return set(path)
 
+        nodes = set()
+        if reverse:
+            for input_node in self.__base.get(*node, "input"):
+                nodes.update(self.__walk_graph(input_node, path=path, reverse=reverse))
+        else:
+            for output_node in self.__base.get_node_outputs(*node):
+                nodes.update(self.__walk_graph(output_node, path=path, reverse=reverse))
+        return nodes
 
-def get_nodes_from(chip, flow, nodes):
-    to_nodes = _get_execution_exit_nodes(chip, flow)
-    return _nodes_to_execute(chip,
-                             flow,
-                             set(nodes),
-                             set(to_nodes),
-                             set(chip.get('option', 'prune')))
+    def __compute_graph(self):
+        '''
+        Precompute graph information
+        '''
 
+        self.__nodes = set()
+        for entry in self.__to:
+            self.__nodes.update(self.__walk_graph(entry))
+        self.__nodes = tuple(sorted(self.__nodes))
 
-###########################################################################
-def nodes_to_execute(chip, flow=None):
-    '''
-    Returns an ordered list of flowgraph nodes which will be executed.
-    This takes the from/to options into account if flow is the current flow or None.
+        # Update to and from
+        self.__from = tuple([
+            node for node in self.__from
+            if not self.__base.get(*node, "input") or
+            all([in_node not in self.__nodes for in_node in self.__base.get(*node, "input")])
+        ])
+        self.__to = tuple([
+            node for node in self.__to
+            if not self.__base.get_node_outputs(*node) or
+            all([out_node not in self.__nodes for out_node in self.__base.get_node_outputs(*node)])
+        ])
 
-    Returns:
-        A list of nodes that will get executed during run() (or a specific flow).
+        ordering = []
+        for level_nodes in self.__base.get_execution_order():
+            level_exec = [node for node in level_nodes if node in self.__nodes]
+            if level_exec:
+                ordering.append(tuple(level_exec))
+        self.__execution_order = tuple(ordering)
 
-    Example:
-        >>> nodes = nodes_to_execute()
-    '''
-    if flow is None:
-        flow = chip.get('option', 'flow')
+    def get_nodes(self):
+        '''
+        Returns the nodes available in this graph
+        '''
+        return self.__nodes
 
-    from_nodes = set(_get_execution_entry_nodes(chip, flow))
-    to_nodes = set(_get_execution_exit_nodes(chip, flow))
-    prune_nodes = set(chip.get('option', 'prune'))
-    if from_nodes == to_nodes:
-        return list(filter(lambda node: node not in prune_nodes, from_nodes))
-    return _nodes_to_execute(chip, flow, from_nodes, to_nodes, prune_nodes)
+    def get_execution_order(self):
+        '''
+        Returns the execution order of the nodes
+        '''
+        return self.__execution_order
 
+    def get_entry_nodes(self):
+        '''
+        Returns the entry nodes for this graph
+        '''
+        return self.__from
 
-###########################################################################
-def _check_flowgraph(chip, flow=None):
-    '''
-    Check if flowgraph is valid.
+    def get_exit_nodes(self):
+        '''
+        Returns the exit nodes for this graph
+        '''
+        return self.__to
 
-    * Checks if all edges have valid nodes
-    * Checks that there are no duplicate edges
-    * Checks if from/to is valid
+    def get_nodes_starting_at(self, step, index):
+        '''
+        Returns all the nodes that the given step, index connect to
 
-    Returns True if valid, False otherwise.
-    '''
+        Args:
+            step (str): step to start from
+            index (str/int): index to start from
+        '''
+        index = str(index)
 
-    if not flow:
-        flow = chip.get('option', 'flow')
+        if (step, index) not in self.get_nodes():
+            raise ValueError(f"{step}{index} is not a valid node")
 
-    error = False
+        return tuple(sorted(self.__walk_graph((step, str(index)), reverse=False)))
 
-    nodes = set()
-    for (step, index) in _get_flowgraph_nodes(chip, flow):
-        nodes.add((step, index))
-        input_nodes = chip.get('flowgraph', flow, step, index, 'input')
-        nodes.update(input_nodes)
+    def get_node_inputs(self, step, index, record=None):
+        if (step, index) not in self.get_nodes():
+            raise ValueError(f"{step}{index} is not a valid node")
 
-        for node in set(input_nodes):
-            if input_nodes.count(node) > 1:
-                in_step, in_index = node
-                chip.logger.error(f'Duplicate edge from {in_step}{in_index} to '
-                                  f'{step}{index} in the {flow} flowgraph')
+        if record is None:
+            inputs = set()
+            for in_step, in_index in self.__base.get(step, index, "input"):
+                if (in_step, in_index) not in self.get_nodes():
+                    continue
+                inputs.add((in_step, in_index))
+            return sorted(inputs)
+
+        inputs = set()
+        for in_step, in_index in self.__base.get(step, index, "input"):
+            if (in_step, in_index) not in self.get_nodes():
+                continue
+
+            if record.get("status", step=in_step, index=in_index) == NodeStatus.SKIPPED:
+                inputs.update(self.get_node_inputs(in_step, in_index, record=record))
+            else:
+                inputs.add((in_step, in_index))
+        return sorted(inputs)
+
+    def get_completed_nodes(self, record=None):
+        if not record:
+            return []
+
+        nodes = set()
+        for step, index in self.get_nodes():
+            if NodeStatus.is_success(record.get("status", step=step, index=index)):
+                nodes.add((step, index))
+
+        return sorted(nodes)
+
+    @staticmethod
+    def validate(flow, from_steps=None, to_steps=None, prune_nodes=None, logger=None):
+        all_steps = set([step for step, _ in flow.get_nodes()])
+
+        if from_steps:
+            from_steps = set(from_steps)
+        else:
+            from_steps = set()
+
+        if to_steps:
+            to_steps = set(to_steps)
+        else:
+            to_steps = set()
+
+        if prune_nodes:
+            prune_nodes = set(prune_nodes)
+        else:
+            prune_nodes = set()
+
+        error = False
+
+        # Check for undefined steps
+        for step in sorted(from_steps.difference(all_steps)):
+            if logger:
+                logger.error(f'From {step} is not defined in the {flow.name()} flowgraph')
+            error = True
+
+        for step in sorted(to_steps.difference(all_steps)):
+            if logger:
+                logger.error(f'To {step} is not defined in the {flow.name()} flowgraph')
+            error = True
+
+        # Check for undefined prunes
+        for step, index in sorted(prune_nodes.difference(flow.get_nodes())):
+            if logger:
+                logger.error(f'{step}{index} is not defined in the {flow.name()} flowgraph')
+            error = True
+
+        if not error:
+            runtime = RuntimeFlowgraph(
+                flow,
+                from_steps=from_steps,
+                to_steps=to_steps,
+                prune_nodes=prune_nodes)
+            unpruned = RuntimeFlowgraph(
+                flow,
+                from_steps=from_steps,
+                to_steps=to_steps)
+
+            # Check for missing entry or exit steps
+            unpruned_exits = set([step for step, _ in unpruned.get_exit_nodes()])
+            runtime_exits = set([step for step, _ in runtime.get_exit_nodes()])
+            for step in unpruned_exits.difference(runtime_exits):
+                if logger:
+                    logger.error(f'pruning removed all exit nodes for {step} in the {flow.name()} '
+                                 'flowgraph')
                 error = True
 
-    for step, index in nodes:
-        # For each task, check input requirements.
-        tool, task = get_tool_task(chip, step, index, flow=flow)
+            unpruned_entry = set([step for step, _ in unpruned.get_entry_nodes()])
+            runtime_entry = set([step for step, _ in runtime.get_entry_nodes()])
+            for step in unpruned_entry.difference(runtime_entry):
+                if logger:
+                    logger.error(f'pruning removed all entry nodes for {step} in the {flow.name()} '
+                                 'flowgraph')
+                error = True
 
-        if not tool:
-            chip.logger.error(f'{step}{index} is missing a tool definition in the {flow} '
-                              'flowgraph')
-            error = True
+            if not error:
+                # Check for missing paths
+                missing = []
+                found_any = False
+                for entrynode in runtime.get_entry_nodes():
+                    found = False
+                    for exitnode in runtime.get_exit_nodes():
+                        if entrynode in runtime.__walk_graph(exitnode):
+                            found = True
+                    if not found:
+                        exits = ",".join([f"{step}{index}"
+                                          for step, index in runtime.get_exit_nodes()])
+                        missing.append(f'no path from {entrynode[0]}{entrynode[1]} to {exits} '
+                                       f'in the {flow.name()} flowgraph')
+                    if found:
+                        found_any = True
+                if not found_any:
+                    error = True
+                    if logger:
+                        for msg in missing:
+                            logger.error(msg)
 
-        if not task:
-            chip.logger.error(f'{step}{index} is missing a task definition in the {flow} '
-                              'flowgraph')
-            error = True
-
-    for step in chip.get('option', 'from'):
-        if step not in chip.getkeys('flowgraph', flow):
-            chip.logger.error(f'{step} is not defined in the {flow} flowgraph')
-            error = True
-
-    for step in chip.get('option', 'to'):
-        if step not in chip.getkeys('flowgraph', flow):
-            chip.logger.error(f'{step} is not defined in the {flow} flowgraph')
-            error = True
-
-    for step, index in chip.get('option', 'prune'):
-        if step not in chip.getkeys('flowgraph', flow):
-            chip.logger.error(f'{step} is not defined in the {flow} flowgraph')
-            error = True
-        elif str(index) not in chip.getkeys('flowgraph', flow, step):
-            chip.logger.error(f'{step}{index} is not defined in the {flow} flowgraph')
-            error = True
-
-    unreachable_steps = _unreachable_steps_to_execute(chip, flow)
-    if unreachable_steps:
-        chip.logger.error(f'These final steps in {flow} can not be reached: '
-                          f'{list(unreachable_steps)}')
-        error = True
-
-    return not error
+        return not error
 
 
-###########################################################################
-def _check_flowgraph_io(chip, nodes=None):
-    '''Check if flowgraph is valid in terms of input and output files.
+class FlowgraphNodeSchema(BaseSchema):
+    def __init__(self):
+        super().__init__()
 
-    Returns True if valid, False otherwise.
-    '''
-    flow = chip.get('option', 'flow')
-    if not nodes:
-        nodes = nodes_to_execute(chip)
-    for (step, index) in nodes:
-        # For each task, check input requirements.
-        tool, task = get_tool_task(chip, step, index, flow=flow)
-
-        if tool == 'builtin':
-            # We can skip builtins since they don't have any particular
-            # input requirements -- they just pass through what they
-            # receive.
-            continue
-
-        # Get files we receive from input nodes.
-        in_nodes = _get_flowgraph_node_inputs(chip, flow, (step, index))
-        all_inputs = set()
-        requirements = chip.get('tool', tool, 'task', task, 'input', step=step, index=index)
-        for in_step, in_index in in_nodes:
-            if (in_step, in_index) not in nodes:
-                # If we're not running the input step, the required
-                # inputs need to already be copied into the build
-                # directory.
-                workdir = chip.getworkdir(step=in_step, index=in_index)
-                in_step_out_dir = os.path.join(workdir, 'outputs')
-
-                if not os.path.isdir(in_step_out_dir):
-                    # This means this step hasn't been run, but that
-                    # will be flagged by a different check. No error
-                    # message here since it would be redundant.
-                    inputs = []
-                    continue
-
-                design = chip.get('design')
-                manifest = f'{design}.pkg.json'
-                inputs = [inp for inp in os.listdir(in_step_out_dir) if inp != manifest]
-            else:
-                inputs = _gather_outputs(chip, in_step, in_index)
-
-            for inp in inputs:
-                node_inp = input_file_node_name(inp, in_step, in_index)
-                if node_inp in requirements:
-                    inp = node_inp
-                if inp in all_inputs:
-                    chip.logger.error(f'Invalid flow: {step}{index} '
-                                      f'receives {inp} from multiple input tasks')
-                    return False
-                all_inputs.add(inp)
-
-        for requirement in requirements:
-            if requirement not in all_inputs:
-                chip.logger.error(f'Invalid flow: {step}{index} will '
-                                  f'not receive required input {requirement}.')
-                return False
-
-    return True
+        schema_flowgraph(self)
 
 
-###########################################################################
-def _gather_outputs(chip, step, index):
-    '''Return set of filenames that are guaranteed to be in outputs
-    directory after a successful run of step/index.'''
+###############################################################################
+# Flow Configuration
+###############################################################################
+def schema_flowgraph(schema):
+    schema = EditableSchema(schema)
 
-    flow = chip.get('option', 'flow')
-    task_gather = getattr(chip._get_task_module(step, index, flow=flow, error=False),
-                          '_gather_outputs',
-                          None)
-    if task_gather:
-        return set(task_gather(chip, step, index))
+    # flowgraph input
+    schema.insert(
+        'input',
+        Parameter(
+            '[(str,str)]',
+            scope=Scope.GLOBAL,
+            shorthelp="Flowgraph: step input",
+            switch="-flowgraph_input 'flow step index <(str,str)>'",
+            example=[
+                "cli: -flowgraph_input 'asicflow cts 0 (place,0)'",
+                "api: chip.set('flowgraph', 'asicflow', 'cts', '0', 'input', ('place', '0'))"],
+            help=trim("""A list of inputs for the current step and index, specified as a
+            (step, index) tuple.""")))
 
-    tool, task = get_tool_task(chip, step, index, flow=flow)
-    return set(chip.get('tool', tool, 'task', task, 'output', step=step, index=index))
+    # flowgraph metric weights
+    metric = 'default'
+    schema.insert(
+        'weight', metric,
+        Parameter(
+            'float',
+            scope=Scope.GLOBAL,
+            defvalue=0.0,
+            shorthelp="Flowgraph: metric weights",
+            switch="-flowgraph_weight 'flow step index metric <float>'",
+            example=[
+                "cli: -flowgraph_weight 'asicflow cts 0 area_cells 1.0'",
+                "api: chip.set('flowgraph', 'asicflow', 'cts', '0', 'weight', 'area_cells', 1.0)"],
+            help=trim("""Weights specified on a per step and per metric basis used to give
+            effective "goodness" score for a step by calculating the sum all step
+            real metrics results by the corresponding per step weights.""")))
 
+    schema.insert(
+        'goal', metric,
+        Parameter(
+            'float',
+            scope=Scope.GLOBAL,
+            shorthelp="Flowgraph: metric goals",
+            switch="-flowgraph_goal 'flow step index metric <float>'",
+            example=[
+                "cli: -flowgraph_goal 'asicflow cts 0 area_cells 1.0'",
+                "api: chip.set('flowgraph', 'asicflow', 'cts', '0', 'goal', 'errors', 0)"],
+            help=trim("""Goals specified on a per step and per metric basis used to
+            determine whether a certain task can be considered when merging
+            multiple tasks at a minimum or maximum node. A task is considered
+            failing if the absolute value of any of its metrics are larger than
+            the goal for that metric, if set.""")))
 
-def _get_flowgraph_information(chip, flow, io=True):
-    from siliconcompiler.scheduler import _setup_node
-    from siliconcompiler.tools._common import input_provides, input_file_node_name
+    # flowgraph tool
+    schema.insert(
+        'tool',
+        Parameter(
+            'str',
+            scope=Scope.GLOBAL,
+            shorthelp="Flowgraph: tool selection",
+            switch="-flowgraph_tool 'flow step index <str>'",
+            example=[
+                "cli: -flowgraph_tool 'asicflow place 0 openroad'",
+                "api: chip.set('flowgraph', 'asicflow', 'place', '0', 'tool', 'openroad')"],
+            help=trim("""Name of the tool name used for task execution.""")))
 
-    # Save schema to avoid making permanent changes
-    org_schema = chip.schema
-    chip.schema = chip.schema.copy()
+    # task (belonging to tool)
+    schema.insert(
+        'task',
+        Parameter(
+            'str',
+            scope=Scope.GLOBAL,
+            shorthelp="Flowgraph: task selection",
+            switch="-flowgraph_task 'flow step index <str>'",
+            example=[
+                "cli: -flowgraph_task 'asicflow myplace 0 place'",
+                "api: chip.set('flowgraph', 'asicflow', 'myplace', '0', 'task', 'place')"],
+            help=trim("""Name of the tool associated task used for step execution.""")))
 
-    # Setup nodes
-    node_exec_order = _get_flowgraph_execution_order(chip, flow)
-    if io:
-        # try:
-        for layer_nodes in node_exec_order:
-            for step, index in layer_nodes:
-                _setup_node(chip, step, index, flow=flow)
-        # except:  # noqa E722
-        #     io = False
+    schema.insert(
+        'taskmodule',
+        Parameter(
+            'str',
+            scope=Scope.GLOBAL,
+            shorthelp="Flowgraph: task module",
+            switch="-flowgraph_taskmodule 'flow step index <str>'",
+            example=[
+                "cli: -flowgraph_taskmodule 'asicflow place 0 "
+                "siliconcompiler.tools.openroad.place'",
+                "api: chip.set('flowgraph', 'asicflow', 'place', '0', 'taskmodule', "
+                "'siliconcompiler.tools.openroad.place')"],
+            help=trim("""
+            Full python module name of the task module used for task setup and execution.
+            """)))
 
-    node_rank = {}
-    for rank, rank_nodes in enumerate(node_exec_order):
-        for step, index in rank_nodes:
-            node_rank[f'{step}{index}'] = rank
-
-    graph_inputs = {}
-    all_graph_inputs = set()
-    if io:
-        for step, index in _get_flowgraph_nodes(chip, flow):
-            tool, task = get_tool_task(chip, step, index, flow=flow)
-            for keypath in chip.get('tool', tool, 'task', task, 'require', step=step, index=index):
-                key = tuple(keypath.split(','))
-                if key[0] == 'input':
-                    graph_inputs.setdefault((step, index), set()).add(keypath)
-
-        for inputs in graph_inputs.values():
-            all_graph_inputs.update(inputs)
-
-    exit_nodes = [f'{step}{index}' for step, index in _get_flowgraph_exit_nodes(chip, flow)]
-
-    nodes = {}
-    edges = []
-
-    def clean_label(label):
-        return label.replace("<", "").replace(">", "")
-
-    def clean_text(label):
-        return label.replace("<", r"\<").replace(">", r"\>")
-
-    all_nodes = [(step, index) for step, index in sorted(_get_flowgraph_nodes(chip, flow))
-                 if chip.get('record', 'status', step=step, index=index) != NodeStatus.SKIPPED]
-    for step, index in all_nodes:
-        tool, task = get_tool_task(chip, step, index, flow=flow)
-
-        if io:
-            inputs = chip.get('tool', tool, 'task', task, 'input', step=step, index=index)
-            outputs = chip.get('tool', tool, 'task', task, 'output', step=step, index=index)
-            if chip.get('record', 'status', step=step, index=index) == NodeStatus.SKIPPED:
-                continue
-        else:
-            inputs = []
-            outputs = []
-
-        node = f'{step}{index}'
-        if io and (step, index) in graph_inputs:
-            inputs.extend(graph_inputs[(step, index)])
-
-        nodes[node] = {
-            "node": (step, index),
-            "file_inputs": inputs,
-            "inputs": {clean_text(f): f'input-{clean_label(f)}' for f in sorted(inputs)},
-            "outputs": {clean_text(f): f'output-{clean_label(f)}' for f in sorted(outputs)},
-            "task": f'{tool}/{task}' if tool != 'builtin' else task,
-            "is_input": node_rank[node] == 0,
-            "rank": node_rank[node]
-        }
-        nodes[node]["width"] = max(len(nodes[node]["inputs"]), len(nodes[node]["outputs"]))
-
-        if tool is None or task is None:
-            nodes[node]["task"] = None
-
-        rank_diff = {}
-        for in_step, in_index in _get_flowgraph_node_inputs(chip, flow, (step, index)):
-            rank_diff[f'{in_step}{in_index}'] = node_rank[node] - node_rank[f'{in_step}{in_index}']
-        nodes[node]["rank_diff"] = rank_diff
-
-    for step, index in all_nodes:
-        node = f'{step}{index}'
-        if io:
-            # get inputs
-            edge_stats = {}
-            for infile, in_nodes in input_provides(chip, step, index, flow=flow).items():
-                outfile = infile
-                for in_step, in_index in in_nodes:
-                    infile = outfile
-                    if infile not in nodes[node]["file_inputs"]:
-                        infile = input_file_node_name(infile, in_step, in_index)
-                        if infile not in nodes[node]["file_inputs"]:
-                            continue
-                    in_node_name = f"{in_step}{in_index}"
-                    outlabel = f"{in_node_name}:output-{clean_label(outfile)}"
-                    inlabel = f"{step}{index}:input-{clean_label(infile)}"
-
-                    if in_node_name not in edge_stats:
-                        edge_stats[in_node_name] = {
-                            "count": 0,
-                            "pairs": [],
-                            "weight": min(nodes[node]["width"], nodes[in_node_name]["width"])
-                        }
-                    edge_stats[in_node_name]["count"] += 1
-                    edge_stats[in_node_name]["pairs"].append((outlabel, inlabel))
-
-            # assign edge weights
-
-            # scale multiple weights
-            for edge_data in edge_stats.values():
-                edge_data["weight"] = int(
-                    math.floor(max(1, edge_data["weight"] / edge_data["count"])))
-
-            # lower exit nodes weights
-            if node in exit_nodes:
-                for edge_data in edge_stats.values():
-                    edge_data["weight"] = 1
-            else:
-                for edge_data in edge_stats.values():
-                    edge_data["weight"] *= 2
-
-            # adjust for rank differences, lower weight if rankdiff is greater than 1
-            for in_node, edge_data in edge_stats.items():
-                if nodes[node]["rank_diff"][in_node] > 1:
-                    edge_data["weight"] = 1
-
-            # create edges
-            for edge_data in edge_stats.values():
-                for outlabel, inlabel in edge_data["pairs"]:
-                    edges.append([outlabel, inlabel, edge_data["weight"]])
-
-            if (step, index) in graph_inputs:
-                for key in graph_inputs[(step, index)]:
-                    inlabel = f"{step}{index}:input-{clean_label(key)}"
-                    edges.append((key, inlabel, 1))
-        else:
-            all_inputs = []
-            for in_step, in_index in chip.get('flowgraph', flow, step, index, 'input'):
-                all_inputs.append(f'{in_step}{in_index}')
-            for item in all_inputs:
-                edges.append((item, node, 1 if node in exit_nodes else 2))
-
-    # Restore schema
-    chip.schema = org_schema
-
-    return all_graph_inputs, nodes, edges, io
+    # flowgraph arguments
+    schema.insert(
+        'args',
+        Parameter(
+            '[str]',
+            scope=Scope.GLOBAL,
+            shorthelp="Flowgraph: setup arguments",
+            switch="-flowgraph_args 'flow step index <str>'",
+            example=[
+                "cli: -flowgraph_args 'asicflow cts 0 0'",
+                "api: chip.add('flowgraph', 'asicflow', 'cts', '0', 'args', '0')"],
+            help=trim("""User specified flowgraph string arguments specified on a per
+            step and per index basis.""")))

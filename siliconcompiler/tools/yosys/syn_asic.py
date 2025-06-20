@@ -1,15 +1,14 @@
-
-from siliconcompiler.tools.yosys import syn_setup, syn_post_process
+from siliconcompiler.tools.yosys import synth_post_process, setup as tool_setup
 import os
 import json
 import re
-from siliconcompiler.tools.yosys.prepareLib import processLibertyFile
+from siliconcompiler.tools.yosys.prepareLib import process_liberty_file
 from siliconcompiler import sc_open
 from siliconcompiler import utils
 from siliconcompiler.tools._common.asic import set_tool_task_var, get_libraries, get_mainlib, \
     CellArea
 from siliconcompiler.tools._common.asic_clock import get_clock_period
-from siliconcompiler.tools._common import get_tool_task
+from siliconcompiler.tools._common import get_tool_task, input_provides, add_require_input
 
 
 def make_docs(chip):
@@ -22,22 +21,50 @@ def setup(chip):
     Perform ASIC synthesis
     '''
 
-    # Generic synthesis task setup.
-    syn_setup(chip)
+    tool_setup(chip)
 
-    # ASIC-specific setup.
+    # Generic synthesis task setup.
+    step = chip.get('arg', 'step')
+    index = chip.get('arg', 'index')
+    tool, task = get_tool_task(chip, step, index)
+    design = chip.top()
+
+    # Set yosys script path.
+    chip.set('tool', tool, 'task', task, 'script', 'sc_synth_asic.tcl',
+             step=step, index=index, clobber=False)
+
+    # Input/output requirements.
+    if f'{design}.v' in input_provides(chip, step, index):
+        chip.set('tool', tool, 'task', task, 'input', design + '.v', step=step, index=index)
+    elif f'{design}.sv' in input_provides(chip, step, index):
+        chip.set('tool', tool, 'task', task, 'input', design + '.sv', step=step, index=index)
+    else:
+        added = False
+        added |= add_require_input(chip, 'input', 'rtl', 'systemverilog',
+                                   include_library_files=False)
+        added |= add_require_input(chip, 'input', 'rtl', 'verilog',
+                                   include_library_files=False)
+        if not added:
+            chip.add('tool', tool, 'task', task, 'require', 'input,rtl,verilog')
+    chip.set('tool', tool, 'task', task, 'output', design + '.vg', step=step, index=index)
+    chip.add('tool', tool, 'task', task, 'output', design + '.netlist.json', step=step, index=index)
+
+    chip.set('tool', tool, 'task', task, 'var', 'use_slang', False,
+             step=step, index=index,
+             clobber=False)
+    chip.set('tool', tool, 'task', task, 'var', 'use_slang',
+             'true/false, if true will attempt to use the slang frontend',
+             field='help')
+
     setup_asic(chip)
 
 
 def setup_asic(chip):
-    ''' Helper method for configs specific to ASIC steps (both syn and lec).
-    '''
-
-    tool = 'yosys'
     step = chip.get('arg', 'step')
     index = chip.get('arg', 'index')
-    _, task = get_tool_task(chip, step, index)
+    tool, task = get_tool_task(chip, step, index)
 
+    # Setup ASIC params
     chip.add('tool', tool, 'task', task, 'require',
              ",".join(['asic', 'logiclib']),
              step=step, index=index)
@@ -295,7 +322,7 @@ def prepare_synthesis_libraries(chip):
                     lib_file_name = f'{lib_file_name_base}_{unique_ident}'
                     unique_ident += 1
 
-                lib_content[lib_file_name] = processLibertyFile(
+                lib_content[lib_file_name] = process_liberty_file(
                     lib_file,
                     logger=logger
                 )
@@ -506,7 +533,7 @@ def pre_process(chip):
 
 
 def post_process(chip):
-    syn_post_process(chip)
+    synth_post_process(chip)
     _generate_cell_area_report(chip)
 
 
@@ -540,8 +567,6 @@ def _generate_cell_area_report(chip):
             area = info["area"]
 
         for cell, inst_count in info["num_cells_by_type"].items():
-            # print(module, cell, inst_count)
-
             cell_area, cell_count = get_area_count(cell)
 
             count += cell_count * inst_count
@@ -558,7 +583,7 @@ def _generate_cell_area_report(chip):
             cell_type = level_info["cells"][cell]["type"]
             if cell_type in modules:
                 area, count = get_area_count(cell_type)
-                cellarea_report.addCell(
+                cellarea_report.add_cell(
                     name=f"{prefix}{cell}",
                     module=cell_type,
                     cellcount=count,
@@ -569,7 +594,7 @@ def _generate_cell_area_report(chip):
     area = 0.0
     if "area" in stat["design"]:
         area = stat["design"]["area"]
-    cellarea_report.addCell(
+    cellarea_report.add_cell(
         name=design,
         module=design,
         cellarea=area,
@@ -579,4 +604,4 @@ def _generate_cell_area_report(chip):
     handle_heir(netlist["modules"][design], "")
 
     if cellarea_report.size() > 0:
-        cellarea_report.writeReport("reports/hierarchical_cell_area.json")
+        cellarea_report.write_report("reports/hierarchical_cell_area.json")

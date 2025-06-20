@@ -10,14 +10,30 @@ import tarfile
 import tempfile
 import multiprocessing
 
+import os.path
+
 from siliconcompiler import utils, SiliconCompilerError
 from siliconcompiler import NodeStatus as SCNodeStatus
 from siliconcompiler._metadata import default_server
-from siliconcompiler.flowgraph import nodes_to_execute
-from siliconcompiler.remote import JobStatus
+from siliconcompiler.remote import JobStatus, NodeStatus
+from siliconcompiler.report.dashboard import DashboardType
+from siliconcompiler.flowgraph import RuntimeFlowgraph
+from siliconcompiler.scheduler.scheduler import Scheduler
+from siliconcompiler.schema import Journal
 
 # Step name to use while logging
 remote_step_name = 'remote'
+
+
+class ClientScheduler(Scheduler):
+    def run_core(self):
+        Client(self._Scheduler__chip).run()
+
+    def configure_nodes(self):
+        return
+
+    def check_manifest(self):
+        return True
 
 
 class Client():
@@ -298,27 +314,38 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
             self.__logger.info(nodes_log)
 
     def _report_job_status(self, info):
+        completed = []
+        starttimes = {}
+
         if not info['busy']:
             # Job is not running
-            return [], False
+            return completed, starttimes, False
 
         try:
             # Decode response JSON, if possible.
             job_info = json.loads(info['message'])
-        except json.JSONDecodeError as e:
-            self.__logger.warning(f"Job is still running: {e}")
-            return [], True
-
-        completed = []
+            if "null" in job_info:
+                job_info[None] = job_info["null"]
+                del job_info["null"]
+        except json.JSONDecodeError:
+            self.__logger.warning(f"Job is still running: {info['message']}")
+            return completed, starttimes, True
 
         nodes_to_log = {}
         for node, node_info in job_info.items():
             status = node_info['status']
-            nodes_to_log.setdefault(status, []).append((node, node_info))
+
+            if status == NodeStatus.UPLOADED:
+                status = SCNodeStatus.PENDING
 
             if SCNodeStatus.is_done(status):
                 # collect completed
                 completed.append(node)
+
+            if not node:
+                continue
+
+            nodes_to_log.setdefault(status, []).append((node, node_info))
 
             if self.__node_information and node in self.__node_information:
                 self.__chip.set('record', 'status', status,
@@ -335,7 +362,16 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
                 self.__log_node_status(stat, nodes)
 
         # Running / in-progress flowgraph nodes should all be printed:
+        base_time = time.time()
         for stat, nodes in nodes_to_log.items():
+            for node, node_info in nodes:
+                if 'elapsed_time' in node_info:
+                    runtime = 0
+                    for part in node_info['elapsed_time'].split(":"):
+                        runtime = 60 * runtime + float(part)
+                    starttimes[(self.__node_information[node]["step"],
+                                self.__node_information[node]["index"])] = base_time - runtime
+
             if SCNodeStatus.is_running(stat):
                 self.__logger.info(f'  {stat.title()} ({len(nodes)}):')
                 for node, node_info in nodes:
@@ -349,7 +385,7 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
             if SCNodeStatus.is_waiting(stat):
                 self.__log_node_status(stat, nodes)
 
-        return completed, True
+        return completed, starttimes, True
 
     def __check(self):
         def post_action(url):
@@ -438,6 +474,9 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
             raise SiliconCompilerError('Cannot pass [arg,index] parameter into remote flow.',
                                        chip=self.__chip)
 
+        if not self.__chip._dash:
+            self.__chip.dashboard(type=DashboardType.CLI)
+
         # Only run the pre-process step if the job doesn't already have a remote ID.
         if not remote_resume:
             self.__run_preprocess()
@@ -450,10 +489,12 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
         self.__request_run()
 
         # Run the main 'check_progress' loop to monitor job status until it finishes.
-        self._run_loop()
-
-        # Restore logger
-        self.__chip._init_logger(in_run=True)
+        try:
+            self._run_loop()
+        finally:
+            # Restore logger
+            self.__chip._dash.end_of_run()
+            self.__chip._init_logger(in_run=True)
 
     def __request_run(self):
         '''
@@ -488,7 +529,7 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
         # Redirected POST requests are translated to GETs. This is actually
         # part of the HTTP spec, so we need to manually follow the trail.
         post_params = {
-            'chip_cfg': self.__chip.schema.cfg,
+            'chip_cfg': self.__chip.schema.getdict(),
             'params': self.__get_post_params(include_job_id=True)
         }
 
@@ -530,8 +571,11 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
             key_type = self.__chip.get(*key, field='type')
 
             if 'dir' in key_type or 'file' in key_type:
-                for _, step, index in self.__chip.schema._getvals(*key, return_defvalue=False):
+                for _, step, index in self.__chip.schema.get(*key, field=None).getvalues(
+                        return_defvalue=False):
                     packages = self.__chip.get(*key, field='package', step=step, index=index)
+                    if not isinstance(packages, list):
+                        packages = [packages]
                     force_copy = False
                     for package in packages:
                         if not package:
@@ -559,7 +603,23 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
             self.__logger.info(f'To cancel this job use: {cancel_cmd}')
             raise SiliconCompilerError('Job canceled by user keyboard interrupt')
 
-    def __import_run_manifests(self):
+    def __import_run_manifests(self, starttimes):
+        if not self.__setup_information_loaded:
+            if self.__setup_information_fetched:
+                manifest = os.path.join(self.__chip.getworkdir(), f'{self.__chip.design}.pkg.json')
+                if os.path.exists(manifest):
+                    try:
+                        Journal.replay_file(self.__chip.schema, manifest)
+                        self.__setup_information_loaded = True
+                        changed = True
+                    except:  # noqa E722
+                        # Import may fail if file is still getting written
+                        pass
+
+        if not self.__setup_information_loaded:
+            # Dont do anything until this has been loaded
+            return
+
         changed = False
         for _, node_info in self.__node_information.items():
             if node_info["imported"]:
@@ -571,12 +631,22 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
                 f'{self.__chip.design}.pkg.json')
             if os.path.exists(manifest):
                 try:
-                    self.__chip.schema.read_journal(manifest)
+                    Journal.replay_file(self.__chip.schema, manifest)
                     node_info["imported"] = True
                     changed = True
                 except:  # noqa E722
                     # Import may fail if file is still getting written
                     pass
+            elif self.__chip.get('record', 'status',
+                                 step=node_info["step"], index=node_info["index"]) \
+                    == SCNodeStatus.SKIPPED:
+                node_info["imported"] = True
+                changed = True
+
+        if changed and self.__chip._dash:
+            # Update dashboard if active
+            self.__chip._dash.update_manifest({"starttimes": starttimes})
+
         return changed
 
     def __ensure_run_loop_information(self):
@@ -588,8 +658,17 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
             check_info = self.__check()
             self.__check_interval = check_info['progress_interval']
 
+        self.__setup_information_fetched = False
+        self.__setup_information_loaded = False
+
         self.__node_information = {}
-        for step, index in nodes_to_execute(self.__chip):
+        runtime = RuntimeFlowgraph(
+            self.__chip.schema.get("flowgraph", self.__chip.get('option', 'flow'), field='schema'),
+            from_steps=self.__chip.get('option', 'from'),
+            to_steps=self.__chip.get('option', 'to'),
+            prune_nodes=self.__chip.get('option', 'prune'))
+
+        for step, index in runtime.get_nodes():
             done = SCNodeStatus.is_done(self.__chip.get('record', 'status', step=step, index=index))
             node_info = {
                 "step": step,
@@ -605,17 +684,35 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
         # Check the job's progress periodically until it finishes.
         running = True
 
+        starttimes = {}
+
         while running:
-            time.sleep(self.__check_interval)
-            self.__import_run_manifests()
+            sleepremaining = self.__check_interval
+            while any([nodeinfo["fetched"] and not nodeinfo["imported"]
+                       for nodeinfo in self.__node_information.values()]):
+                self.__import_run_manifests(starttimes)
+                sleepremaining -= 1
+                if sleepremaining <= 0:
+                    break
+                time.sleep(1)
+            if sleepremaining > 0:
+                time.sleep(sleepremaining)
 
             # Check progress
             job_info = self.check_job_status()
-            completed, running = self._report_job_status(job_info)
+            completed, new_starttimes, running = self._report_job_status(job_info)
+
+            # preserve old starttimes
+            starttimes = {**starttimes, **new_starttimes}
 
             if self.__chip._dash:
                 # Update dashboard if active
-                self.__chip._dash.update_manifest()
+                self.__chip._dash.update_manifest({"starttimes": starttimes})
+
+            if None in completed:
+                completed.remove(None)
+                if not self.__setup_information_fetched:
+                    self.__schedule_fetch_result(None)
 
             nodes_to_fetch = []
             for node in completed:
@@ -632,7 +729,6 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
         for node, node_info in self.__node_information.items():
             if not node_info["fetched"]:
                 self.__schedule_fetch_result(node)
-        self.__schedule_fetch_result(node)
 
         self._finalize_loop()
 
@@ -648,14 +744,15 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
             self.__download_pool.join()
             self.__download_pool = None
 
-        self.__import_run_manifests()
+        self.__import_run_manifests({})
 
     def __schedule_fetch_result(self, node):
-        self.__node_information[node]["fetched"] = True
+        if node:
+            self.__node_information[node]["fetched"] = True
+            self.__logger.info(f'    {node}')
+        else:
+            self.__setup_information_fetched = True
         self.__download_pool.apply_async(Client._fetch_result, (self, node))
-        if node is None:
-            node = 'final result'
-        self.__logger.info(f'    {node}')
 
     def _fetch_result(self, node):
         '''

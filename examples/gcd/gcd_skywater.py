@@ -73,20 +73,22 @@ def main():
                 chip.add('checklist', 'oh_tapeout', 'errors_warnings', 'task',
                          ('signoff', step, index))
 
-    status = chip.check_checklist('oh_tapeout')
+    status = chip.check_checklist('oh_tapeout', require_reports=False)
     if not status:
-        sys.exit(1)
+        return 1
 
     # Mark 'ok'
     for item in chip.getkeys('checklist', 'oh_tapeout'):
         chip.set('checklist', 'oh_tapeout', item, 'ok', True)
 
-    status = chip.check_checklist('oh_tapeout', check_ok=True)
+    status = chip.check_checklist('oh_tapeout', check_ok=True, require_reports=False)
     if not status:
-        sys.exit(1)
+        return 1
 
     chip.write_manifest('gcd.checked.pkg.json')
 
+    return 0
+
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

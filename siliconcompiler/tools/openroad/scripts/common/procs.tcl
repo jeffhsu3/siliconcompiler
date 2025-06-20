@@ -97,7 +97,12 @@ proc sc_global_placement { args } {
 # Detailed Placement
 ###########################
 
-proc sc_detailed_placement { } {
+proc sc_detailed_placement { args } {
+    sta::parse_key_args "sc_detailed_placement" args \
+        keys {-congestion_report} \
+        flags {}
+    sta::check_argc_eq0 "sc_detailed_placement" $args
+
     set dpl_padding [lindex [sc_cfg_tool_task_get var pad_detail_place] 0]
     set dpl_disallow_one_site [lindex [sc_cfg_tool_task_get var dpl_disallow_one_site] 0]
     set dpl_max_displacement [lindex [sc_cfg_tool_task_get var dpl_max_displacement] 0]
@@ -111,10 +116,23 @@ proc sc_detailed_placement { } {
         lappend dpl_args "-disallow_one_site_gaps"
     }
 
+    set incremental_route [expr { [sc_check_version 20073] && [grt::have_routes] }]
+
+    if { $incremental_route } {
+        global_route -start_incremental
+    }
+
     sc_report_args -command detailed_placement -args $dpl_args
+
     detailed_placement \
         -max_displacement $dpl_max_displacement \
         {*}$dpl_args
+
+    if { $incremental_route } {
+        global_route -end_incremental \
+            -congestion_report_file $keys(-congestion_report)
+    }
+
     check_placement -verbose
 }
 
@@ -393,12 +411,18 @@ proc sc_psm_check_nets { } {
 # Save an image
 ###########################
 
-proc sc_save_image { title path { pixels 1000 } } {
+proc sc_save_image { title path { gif false } { pixels 1000 } } {
     utl::info FLW 1 "Saving \"$title\" to $path"
 
     save_image -resolution [sc_image_resolution $pixels] \
         -area [sc_image_area] \
         $path
+
+    if { $gif } {
+        save_animated_gif -add \
+            -resolution [sc_image_resolution $pixels] \
+            -area [sc_image_area]
+    }
 }
 
 ###########################
@@ -462,6 +486,9 @@ proc sc_image_setup_default { } {
     gui::set_display_controls "Misc/Scale bar" visible true
     gui::set_display_controls "Misc/Highlight selected" visible true
     gui::set_display_controls "Misc/Detailed view" visible true
+    if { [sc_check_version 21574] } {
+        gui::set_display_controls "Misc/Labels" visible true
+    }
 }
 
 ###########################
@@ -579,6 +606,22 @@ proc sc_has_input_files { type key } {
     return [expr { [sc_get_input_files $type $key] != [] }]
 }
 
+proc sc_path_group { args } {
+    sta::parse_key_args "sc_path_group" args \
+        keys {-name -to -from} \
+        flags {}
+
+    sta::check_argc_eq0 "sc_path_group" $args
+
+    if { [llength $keys(-from)] == 0 } {
+        return
+    }
+    if { [llength $keys(-to)] == 0 } {
+        return
+    }
+    group_path -name $keys(-name) -from $keys(-from) -to $keys(-to)
+}
+
 proc sc_setup_sta { } {
     set sta_early_timing_derate [lindex [sc_cfg_tool_task_get var sta_early_timing_derate] 0]
     set sta_late_timing_derate [lindex [sc_cfg_tool_task_get var sta_late_timing_derate] 0]
@@ -589,6 +632,39 @@ proc sc_setup_sta { } {
     }
     if { $sta_late_timing_derate != 0.0 } {
         set_timing_derate -late $sta_late_timing_derate
+    }
+
+    if { [sc_check_version 19370] } {
+        # Create path groups
+        if {
+            [lindex [sc_cfg_tool_task_get var sta_define_path_groups] 0] == "true" &&
+            [llength [sta::path_group_names]] == 0
+        } {
+            sc_path_group -name in2out -from [all_inputs -no_clocks] -to [all_outputs]
+
+            if {
+                [llength [all_clocks]] == 1 ||
+                [lindex [sc_cfg_tool_task_get var sta_unique_path_groups_per_clock] 0] == "false"
+            } {
+                sc_path_group -name in2reg -from [all_inputs -no_clocks] -to [all_registers]
+                sc_path_group -name reg2reg -from [all_registers] -to [all_registers]
+                sc_path_group -name reg2out -from [all_registers] -to [all_outputs]
+            } else {
+                foreach clock [all_clocks] {
+                    set clk_name [get_property $clock name]
+                    sc_path_group -name in2reg.${clk_name} \
+                        -from [all_inputs -no_clocks] \
+                        -to [all_registers -clock $clock]
+                    sc_path_group -name reg2reg.${clk_name} \
+                        -from [all_registers -clock $clock] \
+                        -to [all_registers -clock $clock]
+                    sc_path_group -name reg2out.${clk_name} \
+                        -from [all_registers -clock $clock] \
+                        -to [all_outputs]
+                }
+            }
+        }
+        utl::info FLW 1 "Timing path groups: [sta::path_group_names]"
     }
 
     # Check timing setup
@@ -799,4 +875,22 @@ proc sc_report_args { args } {
     }
 
     puts "$keys(-command) siliconcompiler arguments: $keys(-args)"
+}
+
+proc sc_global_connections { args } {
+    sta::check_argc_eq0 "sc_global_connections" $args
+
+    if { [sc_cfg_tool_task_exists {file} global_connect] } {
+        set global_connect_files []
+        foreach global_connect [sc_cfg_tool_task_get {file} global_connect] {
+            if { [lsearch -exact $global_connect_files $global_connect] != -1 } {
+                continue
+            }
+            puts "Loading global connect configuration: ${global_connect}"
+            source $global_connect
+
+            lappend global_connect_files $global_connect
+        }
+    }
+    tee -file reports/global_connections.rpt {report_global_connect}
 }

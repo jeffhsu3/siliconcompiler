@@ -6,12 +6,12 @@ from email.mime.application import MIMEApplication
 import json
 import os
 from siliconcompiler import sc_open
-from siliconcompiler.schema import Schema
+from siliconcompiler import Schema
 from siliconcompiler.report import utils as report_utils
 import fastjsonschema
 from pathlib import Path
-from siliconcompiler.flowgraph import get_executed_nodes
 import uuid
+from siliconcompiler.flowgraph import RuntimeFlowgraph
 
 
 # Compile validation code for API request bodies.
@@ -25,7 +25,7 @@ with open(api_dir / 'email_credentials.json') as schema:
 def __load_config(chip):
     path = default_email_credentials_file()
     if not os.path.exists(path):
-        chip.logger.warn(f'Email credentials are not available: {path}')
+        chip.logger.warning(f'Email credentials are not available: {path}')
         return {}
 
     with open(path) as f:
@@ -91,9 +91,15 @@ def send(chip, msg_type, step, index):
                                           filename=os.path.basename(layout_img))
                     msg.attach(img_attach)
 
-            nodes_to_execute = get_executed_nodes(chip, flow)
+            runtime = RuntimeFlowgraph(
+                chip.schema.get("flowgraph", flow, field='schema'),
+                from_steps=chip.get('option', 'from'),
+                to_steps=chip.get('option', 'to'),
+                prune_nodes=chip.get('option', 'prune'))
+
             nodes, errors, metrics, metrics_unit, metrics_to_show, _ = \
-                report_utils._collect_data(chip, flow=flow, flowgraph_nodes=nodes_to_execute)
+                report_utils._collect_data(chip, flow=flow,
+                                           flowgraph_nodes=runtime.get_nodes())
 
             text_msg = get_file_template('email/summary.j2').render(
                 design=chip.design,

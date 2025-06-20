@@ -1,12 +1,13 @@
 from siliconcompiler import NodeStatus
-from siliconcompiler import units
-from siliconcompiler.flowgraph import _get_flowgraph_execution_order, _get_flowgraph_exit_nodes, \
-    nodes_to_execute
+from siliconcompiler.utils import units
 from siliconcompiler.tools._common import get_tool_task
+
+from siliconcompiler.flowgraph import RuntimeFlowgraph
 
 
 def _find_summary_image(chip, ext='png'):
-    for nodes in reversed(_get_flowgraph_execution_order(chip, chip.get('option', 'flow'))):
+    for nodes in reversed(chip.schema.get(
+            "flowgraph", chip.get('option', 'flow'), field="schema").get_execution_order()):
         for step, index in nodes:
             layout_img = chip.find_result(ext, step=step, index=index)
             if layout_img:
@@ -16,7 +17,8 @@ def _find_summary_image(chip, ext='png'):
 
 def _find_summary_metrics(chip, metrics_map):
     metrics = {}
-    for nodes in reversed(_get_flowgraph_execution_order(chip, chip.get('option', 'flow'))):
+    for nodes in reversed(chip.schema.get(
+            "flowgraph", chip.get('option', 'flow'), field="schema").get_execution_order()):
         for step, index in nodes:
             for name, metric_info in metrics_map.items():
                 if name in metrics:
@@ -26,9 +28,7 @@ def _find_summary_metrics(chip, metrics_map):
 
                 data = chip.get('metric', metric, step=step, index=index)
                 if data is not None:
-                    unit = None
-                    if chip.schema.has_field('metric', metric, 'unit'):
-                        unit = chip.get('metric', metric, field='unit')
+                    unit = chip.get('metric', metric, field='unit')
                     if formatter:
                         metrics[name] = formatter(data, unit)
                     else:
@@ -40,8 +40,17 @@ def _find_summary_metrics(chip, metrics_map):
 def _collect_data(chip, flow=None, flowgraph_nodes=None, format_as_string=True):
     if not flow:
         flow = chip.get('option', 'flow')
+    if not flow:
+        return [], {}, {}, {}, [], {}
+
     if not flowgraph_nodes:
-        flowgraph_nodes = nodes_to_execute(chip)
+        runtime = RuntimeFlowgraph(
+            chip.schema.get("flowgraph", flow, field='schema'),
+            from_steps=chip.get('option', 'from'),
+            to_steps=chip.get('option', 'to'),
+            prune_nodes=chip.get('option', 'prune'))
+
+        flowgraph_nodes = list(runtime.get_nodes())
         # only report tool based steps functions
         for (step, index) in list(flowgraph_nodes):
             tool, task = get_tool_task(chip, step, '0', flow=flow)
@@ -61,7 +70,7 @@ def _collect_data(chip, flow=None, flowgraph_nodes=None, format_as_string=True):
     reports = {}
 
     # Build ordered list of nodes in flowgraph
-    for level_nodes in _get_flowgraph_execution_order(chip, flow):
+    for level_nodes in chip.schema.get("flowgraph", flow, field="schema").get_execution_order():
         nodes.extend(sorted(level_nodes))
     nodes = [node for node in nodes if node in flowgraph_nodes]
     for (step, index) in nodes:
@@ -76,9 +85,7 @@ def _collect_data(chip, flow=None, flowgraph_nodes=None, format_as_string=True):
     for metric in chip.getkeys('metric'):
 
         # Get the unit associated with the metric
-        metric_unit = None
-        if chip.schema.has_field('metric', metric, 'unit'):
-            metric_unit = chip.get('metric', metric, field='unit')
+        metric_unit = chip.get('metric', metric, field='unit')
         metric_type = chip.get('metric', metric, field='type')
 
         show_metric = False
@@ -140,7 +147,10 @@ def _get_flowgraph_path(chip, flow, nodes_to_execute, only_include_successful=Fa
     to_search = []
     # Start search with any successful leaf nodes.
     flowgraph_steps = list(map(lambda node: node[0], nodes_to_execute))
-    end_nodes = _get_flowgraph_exit_nodes(chip, flow, steps=flowgraph_steps)
+    runtime = RuntimeFlowgraph(chip.schema.get("flowgraph", flow, field='schema'),
+                               from_steps=flowgraph_steps,
+                               to_steps=flowgraph_steps)
+    end_nodes = runtime.get_exit_nodes()
     for node in end_nodes:
         if only_include_successful:
             if NodeStatus.is_success(chip.get('record', 'status', step=node[0], index=node[1])):

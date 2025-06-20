@@ -1,4 +1,7 @@
 build/
 .venv/
-/setup/
+/setup/docker/
 /docs/
+siliconcompiler.egg-info/
+**/build/
+**/__pycache__/

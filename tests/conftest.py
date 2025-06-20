@@ -1,6 +1,8 @@
+import copy
 import os
 import pytest
 import siliconcompiler
+from siliconcompiler import utils
 from siliconcompiler.tools import openroad
 from siliconcompiler.tools._common import get_tool_tasks
 from siliconcompiler.targets import freepdk45_demo
@@ -10,6 +12,8 @@ import json
 import shutil
 import socket
 import time
+from siliconcompiler.scheduler import TaskScheduler
+from unittest.mock import patch
 
 
 def pytest_addoption(parser):
@@ -28,20 +32,18 @@ def pytest_addoption(parser):
 
 
 @pytest.fixture(autouse=True)
-def test_wrapper(tmp_path, request):
+def test_wrapper(tmp_path, request, monkeypatch):
     '''Fixture that automatically runs each test in a test-specific temporary
     directory to avoid clutter. To override this functionality, pass in the
     --cwd flag when you invoke pytest.'''
     if not request.config.getoption("--cwd"):
-        topdir = os.getcwd()
-        os.chdir(tmp_path)
+        monkeypatch.chdir(tmp_path)
 
         # Run the test.
         yield
 
-        os.chdir(topdir)
-
         if request.config.getoption("--clean"):
+            monkeypatch.undo()
             shutil.rmtree(tmp_path)
     else:
         yield
@@ -67,15 +69,34 @@ def use_strict(monkeypatch, request):
 
 
 @pytest.fixture(autouse=True)
-def use_local_data(monkeypatch, request):
+def limit_cpus(monkeypatch, request):
     '''
-    Ensure the siliconcompiler_data is set to the local version during testing
+    Limit CPU core count for eda tests
     '''
-    if 'nolocal' in request.keywords:
+    if 'eda' not in request.keywords:
+        return
+    if 'nocpulimit' in request.keywords:
         return
 
-    local_path = os.path.dirname(os.path.dirname(__file__))
-    monkeypatch.setattr('siliconcompiler.utils._siliconcompiler_data_path', local_path)
+    org_cpus = utils.get_cores(siliconcompiler.Chip("dummy"))
+
+    def limit_cpu(*args, **kwargs):
+        if org_cpus > 1:
+            return 2
+        return 1
+
+    monkeypatch.setattr(utils, 'get_cores', limit_cpu)
+
+
+@pytest.fixture(autouse=True)
+def isolate_callbacks():
+    '''
+    Isolate callbacks for testing
+    '''
+
+    callbacks = TaskScheduler._TaskScheduler__callbacks
+    with patch.dict(callbacks):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -97,7 +118,7 @@ def disable_or_images(monkeypatch, request):
     monkeypatch.setattr(siliconcompiler.Chip, 'run', mock_run)
 
 
-@pytest.fixture
+@pytest.fixture(scope='session')
 def test_dir(tmp_path_factory):
     yield tmp_path_factory.getbasetemp().parent
 
@@ -111,42 +132,137 @@ def mock_home(monkeypatch, test_dir):
     monkeypatch.setenv("HOME", str(test_dir))
 
 
-@pytest.fixture
+@pytest.fixture(scope='session')
 def scroot():
     '''Returns an absolute path to the SC root directory.'''
-    mydir = os.path.dirname(__file__)
-    return os.path.abspath(os.path.join(mydir, '..'))
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
 
 @pytest.fixture
 def datadir(request):
     '''Returns an absolute path to the current test directory's local data
     directory.'''
-    mydir = os.path.dirname(request.fspath)
-    return os.path.abspath(os.path.join(mydir, 'data'))
+    return os.path.abspath(os.path.join(os.path.dirname(request.fspath), 'data'))
 
 
 @pytest.fixture
 def gcd_chip(examples_root):
     '''Returns a fully configured chip object that will compile the GCD example
     design using freepdk45 and the asicflow.'''
-    gcd_ex_dir = os.path.join(examples_root, 'gcd')
 
     chip = siliconcompiler.Chip('gcd')
+    chip.register_source('gcd-pytest-example', os.path.join(examples_root, 'gcd'))
     chip.use(freepdk45_demo)
-    chip.input(os.path.join(gcd_ex_dir, 'gcd.v'))
-    chip.input(os.path.join(gcd_ex_dir, 'gcd.sdc'))
+    chip.input('gcd.v', package='gcd-pytest-example')
+    chip.input('gcd.sdc', package='gcd-pytest-example')
     chip.set('constraint', 'outline', [(0, 0), (100.13, 100.8)])
     chip.set('constraint', 'corearea', [(10.07, 11.2), (90.25, 91)])
-    chip.set('option', 'nodisplay', 'true')
-    chip.set('option', 'quiet', 'true')
+    chip.set('option', 'nodisplay', True)
+    chip.set('option', 'quiet', True)
 
     return chip
 
 
+@pytest.fixture(scope='session')
+def gcd_chip_dir(tmpdir_factory, examples_root):
+    '''Returns a fully configured chip object that will compile the GCD example
+    design using freepdk45 and the asicflow.'''
+
+    cwd = os.getcwd()
+    rundir = str(tmpdir_factory.mktemp("gcd"))
+    os.chdir(rundir)
+
+    chip = siliconcompiler.Chip('gcd')
+    chip.register_source('gcd-pytest-example', os.path.join(examples_root, 'gcd'))
+    chip.use(freepdk45_demo)
+    chip.input('gcd.v', package='gcd-pytest-example')
+    chip.input('gcd.sdc', package='gcd-pytest-example')
+    chip.set('constraint', 'outline', [(0, 0), (100.13, 100.8)])
+    chip.set('constraint', 'corearea', [(10.07, 11.2), (90.25, 91)])
+    chip.set('option', 'nodisplay', True)
+    chip.set('option', 'quiet', True)
+
+    assert chip.run(raise_exception=True)
+
+    os.chdir(cwd)
+
+    return chip, rundir
+
+
+@pytest.fixture(scope='session')
+def heartbeat_chip_dir(tmpdir_factory, scroot):
+    '''Fixture that creates a heartbeat build directory by running a build.
+    '''
+
+    cwd = os.getcwd()
+    rundir = str(tmpdir_factory.mktemp("heartbeat"))
+    os.chdir(rundir)
+
+    chip = siliconcompiler.Chip('heartbeat')
+    chip.register_source('heartbeat-pytest', os.path.join(scroot, 'tests', 'data'))
+    chip.set('option', 'loglevel', 'error')
+    chip.set('option', 'quiet', True)
+    chip.input('heartbeat.v', package='heartbeat-pytest')
+    chip.input('heartbeat.sdc', package='heartbeat-pytest')
+    chip.use(freepdk45_demo)
+    assert chip.run(raise_exception=True)
+
+    os.chdir(cwd)
+
+    return chip, rundir
+
+
 @pytest.fixture
+def copy_chip_dir():
+    def gen_copy(chip_dir, output="./"):
+        chip, rundir = chip_dir
+
+        shutil.copytree(rundir, output, dirs_exist_ok=True)
+
+        new_chip = copy.deepcopy(chip)
+        new_chip.cwd = os.path.abspath(output)
+        return new_chip
+
+    return gen_copy
+
+
+@pytest.fixture(scope='session')
 def examples_root(scroot):
     return os.path.join(scroot, 'examples')
+
+
+@pytest.fixture
+def caplogger():
+    log_handler = None
+    file_content = None
+    _chip = None
+
+    def close():
+        nonlocal log_handler
+        nonlocal file_content
+
+        if not log_handler:
+            return file_content
+
+        log_handler.flush()
+        with open(log_handler.baseFilename) as f:
+            file_content = f.read()
+
+        _chip.logger.removeHandler(log_handler)
+        log_handler = None
+
+        return file_content
+
+    def install(chip, path="pytest-testing.log"):
+        nonlocal log_handler
+        nonlocal _chip
+        _chip = chip
+
+        log_handler = _chip._add_file_logger(path)
+
+        return close
+
+    return install
 
 
 @pytest.fixture
@@ -201,7 +317,7 @@ def scserver(scserver_nfs_path, unused_tcp_port, request, wait_for_port):
 
 @pytest.fixture
 def wait_for_port():
-    def isOpen(port, timeout=1):
+    def is_open(port, timeout=1):
         test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         test_socket.settimeout(1)
 
@@ -216,7 +332,7 @@ def wait_for_port():
 
     def wait(port, timeout=20):
         for _ in range(timeout):
-            if isOpen(port):
+            if is_open(port):
                 return
             else:
                 time.sleep(1)
@@ -258,10 +374,15 @@ def run_cli():
             cmd = [cmd]
 
         stdout = None
+        capture_stdout = True
         if stdout_to_pipe:
             stdout = subprocess.PIPE
+            capture_stdout = False
 
-        proc = subprocess.run(cmd, stdout=stdout)
+        proc = subprocess.run(cmd,
+                              stdout=stdout,
+                              capture_output=capture_stdout,
+                              universal_newlines=True)
 
         assert proc.returncode == retcode, \
             f"\"{' '.join(cmd)}\" failed with exit code {proc.returncode} != {retcode}"

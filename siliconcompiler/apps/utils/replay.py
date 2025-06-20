@@ -18,6 +18,7 @@ import siliconcompiler
 from siliconcompiler.apps._common import UNSET_DESIGN
 from siliconcompiler import SiliconCompilerError
 from siliconcompiler import utils
+from siliconcompiler.record import RecordTime
 
 
 def make_bytes(data):
@@ -86,7 +87,8 @@ def main():
 
     pythonversion = set()
     nodes = set()
-    for version, step, index in chip.schema._getvals('history', jobname, 'record', 'pythonversion'):
+    for version, step, index in chip.schema.get('history', jobname, 'record', 'pythonversion',
+                                                field=None).getvalues():
         pythonversion.add(version)
         nodes.add((step, index))
 
@@ -126,10 +128,10 @@ def main():
     path = os.path.abspath(args['file'])
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
-    starttimes = set()
-    for starttime, step, index in chip.schema._getvals('history', jobname, 'record', 'starttime'):
-        starttimes.add(datetime.strptime(starttime, '%Y-%m-%d %H:%M:%S'))
-    starttime = min(starttimes).strftime('%Y-%m-%d %H:%M:%S')
+    record_schema = chip.schema.get('history', jobname, 'record', field="schema")
+    starttime = datetime.fromtimestamp(
+        record_schema.get_earliest_time(RecordTime.START)).strftime(
+            '%Y-%m-%d %H:%M:%S')
 
     with io.StringIO() as fd:
         fd.write(utils.get_file_template('replay/requirements.txt').render(
@@ -162,7 +164,7 @@ def main():
         fd.flush()
         script = convert_base64(compress(fd.getvalue()))
 
-    manifest = convert_base64(compress(json.dumps(chip.schema.cfg, indent=2)))
+    manifest = convert_base64(compress(json.dumps(chip.schema.getdict(), indent=2)))
 
     tool_info = []
     for tool, version in tools.items():

@@ -112,20 +112,19 @@ def test_replay(scroot, run_cli):
     with open(script, 'a') as f:
         f.write(echo + '\n')
 
-    proc = run_cli(script, stdout_to_pipe=True)
+    proc = run_cli(script)
 
-    assert proc.stdout.decode('ascii').rstrip().splitlines()[-1] == \
+    assert proc.stdout.rstrip().splitlines()[-1] == \
         'SUCCESS'
 
 
 @pytest.mark.eda
 @pytest.mark.quick
-def test_github_issue_1789():
+def test_github_issue_1789(datadir):
     chip = siliconcompiler.Chip('encode_stream_sc_module_8')
     chip.use(freepdk45_demo)
 
-    i_file = os.path.join(os.path.dirname(__file__),
-                          'data',
+    i_file = os.path.join(datadir,
                           'gh1789',
                           'encode_stream_sc_module_8.v')
 
@@ -149,11 +148,3 @@ def test_github_issue_1789():
     o_file_data = "\n".join(o_file_data.splitlines()[3:-4])
 
     assert i_file_data == o_file_data
-
-
-if __name__ == "__main__":
-    from tests.fixtures import scroot
-    from tests.fixtures import datadir
-    test_surelog(scroot())
-    test_surelog_duplicate_inputs(scroot())
-    test_surelog_preproc_regression(datadir(__file__))

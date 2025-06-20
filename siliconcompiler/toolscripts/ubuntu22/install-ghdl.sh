@@ -1,11 +1,20 @@
 #!/bin/sh
 
-set -e
+set -ex
 
 # Get directory of script
 src_path=$(cd -- "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P)/..
 
-sudo apt-get install -y gnat libgnat-9 libz-dev
+USE_SUDO_INSTALL="${USE_SUDO_INSTALL:-yes}"
+if [ "${USE_SUDO_INSTALL:-yes}" = "yes" ]; then
+    SUDO_INSTALL=sudo
+else
+    SUDO_INSTALL=""
+fi
+
+sudo apt-get install -y llvm-dev clang gnat libgnat-9 libz-dev
+
+sudo apt-get install -y git build-essential
 
 mkdir -p deps
 cd deps
@@ -19,7 +28,7 @@ if [ ! -z ${PREFIX} ]; then
     args=--prefix="$PREFIX"
 fi
 
-./configure $args
+./configure --with-llvm-config $args
 make -j$(nproc)
-sudo make install
+$SUDO_INSTALL make install
 cd -

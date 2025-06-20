@@ -1,13 +1,19 @@
 #!/bin/sh
 
-set -e
+set -ex
 
 # Get directory of script
 src_path=$(cd -- "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P)/..
 
+USE_SUDO_INSTALL="${USE_SUDO_INSTALL:-yes}"
+if [ "${USE_SUDO_INSTALL:-yes}" = "yes" ]; then
+    SUDO_INSTALL=sudo
+else
+    SUDO_INSTALL=""
+fi
+
 sudo yum group install -y "Development Tools"
-sudo yum install -y tcl-devel tk-devel tcsh csh
-# sudo apt-get install -y build-essential m4 tcsh csh libx11-dev tcl-dev tk-dev
+sudo yum install -y tcl-devel tk-devel tcsh csh git
 
 mkdir -p deps
 cd deps
@@ -23,4 +29,4 @@ fi
 
 LD_FLAGS=-shared ./configure $args
 make -j$(nproc)
-sudo make install
+$SUDO_INSTALL make install

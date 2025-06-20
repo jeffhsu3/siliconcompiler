@@ -103,6 +103,8 @@ def add_require_input(chip, *key, include_library_files=True):
                  ",".join(key),
                  step=step, index=index)
 
+    return bool(keys)
+
 
 def get_input_files(chip, *key, add_library_files=True):
     '''
@@ -375,17 +377,20 @@ def input_file_node_name(filename, step, index):
 
     file_type = get_file_ext(filename)
 
-    base = filename
-    total_ext = []
-    ext = None
-    while ext != file_type:
-        base, ext = os.path.splitext(base)
-        ext = ext[1:].lower()
-        total_ext.append(ext)
+    if file_type:
+        base = filename
+        ext = None
+        total_ext = []
+        while ext != file_type:
+            base, ext = os.path.splitext(base)
+            ext = ext[1:].lower()
+            total_ext.append(ext)
 
-    total_ext.reverse()
+        total_ext.reverse()
 
-    return f'{base}.{step}{index}.{".".join(total_ext)}'
+        return f'{base}.{step}{index}.{".".join(total_ext)}'
+    else:
+        return f'{filename}.{step}{index}'
 
 
 def add_common_file(chip, key, file):
@@ -463,16 +468,12 @@ def record_metric(chip, step, index, metric, value, source, source_unit=None):
         Records the metric cell area under 'floorplan0' and notes the source as
         'reports/metrics.json'
     '''
-    from siliconcompiler import units
-
-    metric_unit = None
-    if chip.schema.has_field('metric', metric, 'unit'):
-        metric_unit = chip.get('metric', metric, field='unit')
-
-    if metric_unit:
-        value = units.convert(value, from_unit=source_unit, to_unit=metric_unit)
-
-    chip.set('metric', metric, value, step=step, index=index)
+    chip.get("metric", field="schema").record(
+        step, index,
+        metric,
+        value,
+        unit=source_unit
+    )
 
     if source:
         flow = chip.get('option', 'flow')

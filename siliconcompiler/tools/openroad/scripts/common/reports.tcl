@@ -27,6 +27,11 @@ if { [sc_cfg_tool_task_check_in_list setup var reports] } {
     tee -file reports/timing/total_negative_slack.rpt \
         "report_tns"
     report_tns_metric -setup
+
+    if { [sc_check_version 19519] && [llength [all_clocks]] > 0 } {
+        tee -quiet -file reports/timing/setup.histogram.rpt \
+            "report_timing_histogram -num_bins 20 -setup"
+    }
 }
 
 if { [sc_cfg_tool_task_check_in_list hold var reports] } {
@@ -42,6 +47,11 @@ if { [sc_cfg_tool_task_check_in_list hold var reports] } {
     report_worst_slack_metric -hold
 
     report_tns_metric -hold
+
+    if { [sc_check_version 19519] && [llength [all_clocks]] > 0 } {
+        tee -quiet -file reports/timing/hold.histogram.rpt \
+            "report_timing_histogram -num_bins 20 -hold"
+    }
 }
 
 if { [sc_cfg_tool_task_check_in_list unconstrained var reports] } {
@@ -102,13 +112,24 @@ if { [sc_cfg_tool_task_check_in_list fmax var reports] } {
     }
     if { $fmax_metric == 0 } {
         # attempt to compute based on combinatorial path
+        set fmax_valid true
         set max_path [find_timing_paths -unconstrained -path_delay max]
-        set max_path_delay [$max_path data_arrival_time]
+        if { $max_path == "" } {
+            set fmax_valid false
+        } else {
+            set max_path_delay [$max_path data_arrival_time]
+        }
         set min_path [find_timing_paths -unconstrained -path_delay min]
-        set min_path_delay [$min_path data_arrival_time]
-        set path_delay [expr { $max_path_delay - min(0, $min_path_delay) }]
-        if { $path_delay > 0 } {
-            set fmax_metric [expr { 1.0 / $path_delay }]
+        if { $min_path == "" } {
+            set fmax_valid false
+        } else {
+            set min_path_delay [$min_path data_arrival_time]
+        }
+        if { $fmax_valid } {
+            set path_delay [expr { $max_path_delay - min(0, $min_path_delay) }]
+            if { $path_delay > 0 } {
+                set fmax_metric [expr { 1.0 / $path_delay }]
+            }
         }
     }
     if { $fmax_metric > 0 } {

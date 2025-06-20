@@ -1,13 +1,9 @@
 # Copyright 2023 Silicon Compiler Authors. All Rights Reserved.
-import os
 import sys
 
 from siliconcompiler import Chip
 from siliconcompiler import SiliconCompilerError
 from siliconcompiler.remote.client import Client, ConfigureClient
-from siliconcompiler.scheduler import _finalize_run
-from siliconcompiler.flowgraph import _get_flowgraph_entry_nodes, _get_flowgraph_node_outputs, \
-    nodes_to_execute
 
 
 def main():
@@ -97,8 +93,9 @@ To delete a job, use:
         chip.logger.error(f'Error: {", ".join(["-"+e for e in exclusive])} are mutually exclusive')
         return 1
     chip_cfg = chip.get('option', 'cfg')
-    if chip_cfg and not any([args[arg] for arg in cfg_only]):
+    if not chip_cfg and any([args[arg] for arg in cfg_only]):
         chip.logger.error(f'Error: -cfg is required for {", ".join(["-"+e for e in cfg_only])}')
+        return 2
     if any([args[arg] for arg in cfg_only]) and args['server']:
         chip.logger.error('Error: -server cannot be specified with '
                           f'{", ".join(["-"+e for e in cfg_only])}')
@@ -157,9 +154,10 @@ To delete a job, use:
     elif args['reconnect']:
         # Start from successors of entry nodes, so entry nodes are not fetched from remote.
         flow = chip.get('option', 'flow')
-        entry_nodes = _get_flowgraph_entry_nodes(chip, flow)
+        entry_nodes = chip.schema.get("flowgraph", flow, field="schema").get_entry_nodes()
         for entry_node in entry_nodes:
-            outputs = _get_flowgraph_node_outputs(chip, flow, entry_node)
+            outputs = chip.schema.get("flowgraph", flow,
+                                      field='schema').get_node_outputs(*entry_node)
             chip.set('option', 'from', list(map(lambda node: node[0], outputs)))
         # Enter the remote run loop.
         try:
@@ -167,15 +165,6 @@ To delete a job, use:
         except SiliconCompilerError as e:
             chip.logger.error(f'{e}')
             return 1
-
-        # Wrap up run
-        for step, index in nodes_to_execute(chip):
-            manifest = os.path.join(chip.getworkdir(step=step, index=index),
-                                    'outputs',
-                                    f'{chip.design}.pkg.json')
-            if os.path.exists(manifest):
-                chip.schema.read_journal(manifest)
-        _finalize_run(chip)
 
         # Summarize the run.
         chip.summary()

@@ -134,7 +134,7 @@ def test_all_failed_min(chip):
     chip.edge(flow, 'place', 'placemin', tail_index=1)
 
     # Expect that command exits early
-    with pytest.raises(siliconcompiler.SiliconCompilerError):
+    with pytest.raises(RuntimeError):
         chip.run(raise_exception=True)
 
     # check that compilation failed
@@ -161,13 +161,8 @@ def test_branch_failed_join(chip):
     chip.edge(flow, 'place', 'placemin', tail_index=1)
 
     # Expect that command exits early
-    with pytest.raises(siliconcompiler.SiliconCompilerError):
+    with pytest.raises(RuntimeError):
         chip.run(raise_exception=True)
 
     # check that compilation failed
     assert chip.find_result('def', step='placemin') is None
-
-
-if __name__ == "__main__":
-    from tests.fixtures import scroot
-    test_tool_option(scroot())

@@ -2,21 +2,21 @@
 # Reading SC Schema
 ###############################
 
-source ./sc_manifest.tcl > /dev/null
+source ./sc_manifest.tcl
 
 ###############################
 # Task Preamble
 ###############################
 
 set sc_refdir [sc_cfg_tool_task_get refdir]
-source -echo "$sc_refdir/apr/preamble.tcl"
+source "$sc_refdir/apr/preamble.tcl"
 
 ###############################
 # Macro placement constraints
 ###############################
 foreach script [sc_cfg_tool_task_get file rtlmp_constraints] {
     puts "Sourcing macro placement constraints: $script"
-    source -echo $script
+    source $script
 }
 
 # Need to check if we have any macros before performing macro placement,
@@ -117,4 +117,4 @@ sc_print_macro_information
 # Task Postamble
 ###############################
 
-source -echo "$sc_refdir/apr/postamble.tcl"
+source "$sc_refdir/apr/postamble.tcl"

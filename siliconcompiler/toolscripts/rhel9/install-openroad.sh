@@ -1,8 +1,21 @@
 #!/bin/sh
 
-set -e
+set -ex
 
 src_path=$(cd -- "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P)/..
+
+if [ ! -z ${PREFIX} ]; then
+    export PATH="$PREFIX/bin:$PATH"
+fi
+
+USE_SUDO_INSTALL="${USE_SUDO_INSTALL:-yes}"
+if [ "${USE_SUDO_INSTALL:-yes}" = "yes" ]; then
+    SUDO_INSTALL="sudo -E PATH=$PATH"
+else
+    SUDO_INSTALL=""
+fi
+
+sudo yum install -y git
 
 mkdir -p deps
 cd deps
@@ -19,7 +32,9 @@ deps_args=""
 if [ ! -z ${PREFIX} ]; then
     deps_args="-prefix=$PREFIX"
 fi
-sudo ./etc/DependencyInstaller.sh -all $deps_args
+sudo ./etc/DependencyInstaller.sh -base
+sudo rm -f etc/openroad_deps_prefixes.txt
+$SUDO_INSTALL ./etc/DependencyInstaller.sh -common $deps_args
 
 cmake_args="-DENABLE_TESTS=OFF"
 if [ ! -z ${PREFIX} ]; then
@@ -29,6 +44,6 @@ fi
 ./etc/Build.sh -cmake="$cmake_args"
 
 cd build
-sudo make install
+$SUDO_INSTALL make install
 
 cd -

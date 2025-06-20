@@ -84,12 +84,16 @@ def extract_metrics(chip):
     metric_reports = {
         "setuptns": [
             "timing/total_negative_slack.rpt",
-            "timing/setup.rpt"
+            "timing/setup.rpt",
+            "timing/setup.histogram.rpt",
+            "images/timing/setup.histogram.png"
         ],
         "setupslack": [
             "timing/worst_slack.setup.rpt",
             "timing/setup.rpt",
-            "timing/setup.topN.rpt"
+            "timing/setup.topN.rpt",
+            "timing/setup.histogram.rpt",
+            "images/timing/setup.histogram.png"
         ],
         "setupskew": [
             "timing/skew.setup.rpt",
@@ -99,12 +103,16 @@ def extract_metrics(chip):
         ],
         "setuppaths": [
             "timing/setup.rpt",
-            "timing/setup.topN.rpt"
+            "timing/setup.topN.rpt",
+            "timing/setup.histogram.rpt",
+            "images/timing/setup.histogram.png"
         ],
         "holdslack": [
             "timing/worst_slack.hold.rpt",
             "timing/hold.rpt",
-            "timing/hold.topN.rpt"
+            "timing/hold.topN.rpt",
+            "timing/hold.histogram.rpt",
+            "images/timing/hold.histogram.png"
         ],
         "holdskew": [
             "timing/skew.hold.rpt",
@@ -114,7 +122,9 @@ def extract_metrics(chip):
         ],
         "holdpaths": [
             "timing/hold.rpt",
-            "timing/hold.topN.rpt"
+            "timing/hold.topN.rpt",
+            "timing/hold.histogram.rpt",
+            "images/timing/hold.histogram.png"
         ],
         "unconstrained": [
             "timing/unconstrained.rpt",
@@ -392,7 +402,7 @@ def _generate_cell_area_report(design, ord_metrics):
         if stdcell_info_area:
             stdcellarea = sum(stdcell_info_area)
 
-        cellarea_report.addCell(
+        cellarea_report.add_cell(
             name=cell_name,
             module=cell_type,
             cellarea=cellarea,
@@ -410,7 +420,7 @@ def _generate_cell_area_report(design, ord_metrics):
         process_cell(module)
 
     if cellarea_report.size() > 0:
-        cellarea_report.writeReport("reports/hierarchical_cell_area.json")
+        cellarea_report.write_report("reports/hierarchical_cell_area.json")
 
 
 def define_tapcell_params(chip):
@@ -490,6 +500,10 @@ def define_ppl_params(chip):
                 ['pdk', pdkname, 'var', 'openroad', 'pin_layer_vertical', stackup]):
         chip.add('tool', tool, 'task', task, 'require', ",".join(key),
                  step=step, index=index)
+    if chip.get('tool', tool, 'task', task, 'file', 'ppl_constraints', step=step, index=index):
+        chip.add('tool', tool, 'task', task, 'require',
+                 ",".join(['tool', tool, 'task', task, 'file', 'ppl_constraints']),
+                 step=step, index=index)
 
 
 def define_pdn_params(chip):
@@ -545,6 +559,9 @@ def define_pad_params(chip):
 
 
 def define_rsz_params(chip):
+    set_tool_task_var(chip, param_key='rsz_skip_drv_repair',
+                      default_value=False,
+                      schelp='skip design rule violation repair')
     set_tool_task_var(chip, param_key='rsz_skip_setup_repair',
                       default_value=False,
                       schelp='skip setup timing repair')
@@ -637,7 +654,7 @@ def define_dpo_params(chip):
                       schelp='true/false, when true the detailed placement optimization '
                              'will be performed')
     set_tool_task_var(chip, param_key='dpo_max_displacement',
-                      default_value='0',
+                      default_value='5',
                       schelp='maximum cell movement in detailed placement optimization in microns, '
                              '0 will result in the tool default maximum displacement')
 
@@ -784,6 +801,14 @@ def define_sta_params(chip):
     set_tool_task_var(chip, param_key='sta_top_n_paths',
                       default_value='10',
                       schelp='number of paths to report timing for')
+    set_tool_task_var(chip, param_key='sta_define_path_groups',
+                      default_value=True,
+                      skip=['pdk', 'lib'],
+                      schelp='true/false, if true will generate path groups for timing reporting')
+    set_tool_task_var(chip, param_key='sta_unique_path_groups_per_clock',
+                      default_value=False,
+                      skip=['pdk', 'lib'],
+                      schelp='true/false, if true will generate separate path groups per clock')
 
     chip.set('tool', tool, 'task', task, 'var', 'power_corner', get_power_corner(chip),
              step=step, index=index, clobber=False)
@@ -1027,6 +1052,8 @@ def set_pnr_inputs(chip):
 
     design = chip.top()
 
+    # clear
+    chip.set('tool', tool, 'task', task, 'input', [], step=step, index=index)
     if f'{design}.sdc' in input_provides(chip, step, index):
         chip.add('tool', tool, 'task', task, 'input', design + '.sdc',
                  step=step, index=index)
@@ -1053,6 +1080,9 @@ def set_pnr_outputs(chip):
     tool, task = get_tool_task(chip, step, index)
 
     design = chip.top()
+
+    # clear
+    chip.set('tool', tool, 'task', task, 'output', [], step=step, index=index)
 
     chip.add('tool', tool, 'task', task, 'output', design + '.sdc', step=step, index=index)
     chip.add('tool', tool, 'task', task, 'output', design + '.vg', step=step, index=index)

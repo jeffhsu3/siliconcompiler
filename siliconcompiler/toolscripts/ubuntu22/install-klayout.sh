@@ -1,9 +1,18 @@
 #!/bin/sh
 
-set -e
+set -ex
 
 # Get directory of script
 src_path=$(cd -- "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P)/..
+
+USE_SUDO_INSTALL="${USE_SUDO_INSTALL:-yes}"
+if [ "${USE_SUDO_INSTALL:-yes}" = "yes" ]; then
+    SUDO_INSTALL=sudo
+else
+    SUDO_INSTALL=""
+fi
+
+sudo apt-get install -y wget lsb-core
 
 mkdir -p deps
 cd deps
@@ -25,5 +34,9 @@ fi
 wget -O klayout.deb $url
 # Install package
 sudo apt-get install -y ./klayout.deb
+
+if [ ! -z ${SC_PREFIX+x} ]; then
+    sudo cp ./klayout.deb "${SC_PREFIX}/"
+fi
 
 cd -

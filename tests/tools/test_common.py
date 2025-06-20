@@ -1,12 +1,127 @@
 import os
 
 from siliconcompiler import Chip, Library, Schema
-from siliconcompiler.tools._common import input_provides, input_file_node_name, get_libraries
+from siliconcompiler.tools._common import input_provides, input_file_node_name, get_libraries, \
+    add_require_input
 from siliconcompiler.tools._common.asic import get_libraries as get_asic_libraries, CellArea
 from siliconcompiler.tools._common.asic_clock import get_clock_period
 
 from core.tools.fake import foo
 import pytest
+
+
+def test_add_input_require_verilog():
+    chip = Chip('test')
+
+    flow = 'test'
+    chip.node(flow, 'onestep', foo)
+
+    chip.input('test.v')
+
+    chip.set('option', 'flow', flow)
+    chip.set('arg', 'step', 'onestep')
+    chip.set('arg', 'index', '0')
+
+    assert add_require_input(chip, 'input', 'rtl', 'verilog')
+    assert not add_require_input(chip, 'input', 'rtl', 'systemverilog')
+
+    assert chip.get('tool', 'fake', 'task', 'foo', 'require',
+                    step='onestep', index='0') == \
+        ['input,rtl,verilog']
+
+
+def test_add_input_require_systemverilog():
+    chip = Chip('test')
+
+    flow = 'test'
+    chip.node(flow, 'onestep', foo)
+
+    chip.input('test.sv')
+
+    chip.set('option', 'flow', flow)
+    chip.set('arg', 'step', 'onestep')
+    chip.set('arg', 'index', '0')
+
+    assert not add_require_input(chip, 'input', 'rtl', 'verilog')
+    assert add_require_input(chip, 'input', 'rtl', 'systemverilog')
+
+    assert chip.get('tool', 'fake', 'task', 'foo', 'require',
+                    step='onestep', index='0') == \
+        ['input,rtl,systemverilog']
+
+
+def test_add_input_require_mixedverilog():
+    chip = Chip('test')
+
+    flow = 'test'
+    chip.node(flow, 'onestep', foo)
+
+    chip.input('test.v')
+    chip.input('test.sv')
+
+    chip.set('option', 'flow', flow)
+    chip.set('arg', 'step', 'onestep')
+    chip.set('arg', 'index', '0')
+
+    assert add_require_input(chip, 'input', 'rtl', 'verilog')
+    assert add_require_input(chip, 'input', 'rtl', 'systemverilog')
+
+    assert chip.get('tool', 'fake', 'task', 'foo', 'require',
+                    step='onestep', index='0') == \
+        ['input,rtl,verilog', 'input,rtl,systemverilog']
+
+
+def test_add_input_require_mixedverilog_library():
+    chip = Chip('<test>')
+
+    flow = 'test'
+    chip.node(flow, 'onestep', foo)
+    chip.set('option', 'flow', flow)
+    chip.set('arg', 'step', 'onestep')
+    chip.set('arg', 'index', '0')
+
+    lib = Library('test')
+    lib.input("testing.v")
+    lib.input("testing.sv")
+    chip.use(lib)
+    chip.set('option', 'library', 'test')
+
+    chip.input("testing.sv")
+
+    assert add_require_input(chip, 'input', 'rtl', 'verilog')
+    assert add_require_input(chip, 'input', 'rtl', 'systemverilog')
+
+    assert chip.get('tool', 'fake', 'task', 'foo', 'require',
+                    step='onestep', index='0') == \
+        ['library,test,input,rtl,verilog',
+         'input,rtl,systemverilog',
+         'library,test,input,rtl,systemverilog']
+
+
+def test_add_input_require_mixedverilog_library_dont_follow():
+    chip = Chip('<test>')
+
+    flow = 'test'
+    chip.node(flow, 'onestep', foo)
+    chip.set('option', 'flow', flow)
+    chip.set('arg', 'step', 'onestep')
+    chip.set('arg', 'index', '0')
+
+    lib = Library('test')
+    lib.input("testing.v")
+    lib.input("testing.sv")
+    chip.use(lib)
+    chip.set('option', 'library', 'test')
+
+    chip.input("testing.sv")
+
+    assert not add_require_input(chip, 'input', 'rtl', 'verilog', include_library_files=False)
+    assert add_require_input(chip, 'input', 'rtl', 'systemverilog')
+
+    assert chip.get('tool', 'fake', 'task', 'foo', 'require',
+                    step='onestep', index='0') == \
+        ['input,rtl,systemverilog',
+         'library,test,input,rtl,systemverilog']
 
 
 def test_input_provides():
@@ -86,6 +201,9 @@ def test_input_file_node_name():
 
     assert 'test.other0.txt' == input_file_node_name('test.txt', 'other', '0')
     assert 'test.other1.txt.gz' == input_file_node_name('test.txt.gz', 'other', '1')
+
+    assert 'test.other0.not' == input_file_node_name('test.not', 'other', '0')
+    assert 'test.other1' == input_file_node_name('test', 'other', '1')
 
 
 def test_get_libraries():
@@ -260,22 +378,22 @@ def test_cell_area():
 
     assert report.size() == 0
 
-    report.addCell()
+    report.add_cell()
     assert report.size() == 0
 
-    report.addCell(name="test1", module="mod")
+    report.add_cell(name="test1", module="mod")
     assert report.size() == 0
 
-    report.addCell(name="test1", module="mod", cellcount=1, cellarea=2)
+    report.add_cell(name="test1", module="mod", cellcount=1, cellarea=2)
     assert report.size() == 1
 
-    report.addCell(module="mod", cellcount=1, cellarea=2)
+    report.add_cell(module="mod", cellcount=1, cellarea=2)
     assert report.size() == 2
 
-    report.addCell(module="mod", cellcount=1, cellarea=2)
+    report.add_cell(module="mod", cellcount=1, cellarea=2)
     assert report.size() == 3
 
-    report.writeReport("test.json")
+    report.write_report("test.json")
 
     assert os.path.isfile("test.json")
 

@@ -2,14 +2,14 @@
 # Reading SC Schema
 ###############################
 
-source ./sc_manifest.tcl > /dev/null
+source ./sc_manifest.tcl
 
 ###############################
 # Task Preamble
 ###############################
 
 set sc_refdir [sc_cfg_tool_task_get refdir]
-source -echo "$sc_refdir/apr/preamble.tcl"
+source "$sc_refdir/apr/preamble.tcl"
 
 ###############################
 # Buffer ports
@@ -70,4 +70,4 @@ estimate_parasitics -placement
 # Task Postamble
 ###############################
 
-source -echo "$sc_refdir/apr/postamble.tcl"
+source "$sc_refdir/apr/postamble.tcl"

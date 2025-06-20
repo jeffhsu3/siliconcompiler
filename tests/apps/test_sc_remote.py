@@ -2,12 +2,14 @@ from siliconcompiler import Chip
 from siliconcompiler.apps import sc_remote
 from siliconcompiler.remote import Client
 from siliconcompiler.remote import JobStatus
+import itertools
 import json
 import os
 import pytest
 import requests
 import uuid
 import sys
+from unittest.mock import patch
 from pathlib import Path
 from siliconcompiler.utils import default_credentials_file
 from siliconcompiler.targets import freepdk45_demo
@@ -189,11 +191,11 @@ def test_sc_remote_reconnect(monkeypatch, unused_tcp_port, scroot, scserver_cred
                                      '-reconnect',
                                      '-cfg', client.remote_manifest()])
 
-    def mock_finalize_run(self, status={}):
+    def mock_finalize_run(*args, **kwargs):
         final_manifest = os.path.join(chip.getworkdir(), f"{chip.get('design')}.pkg.json")
         with open(final_manifest, 'w') as wf:
             wf.write('{"mocked": "manifest"}')
-    monkeypatch.setattr("siliconcompiler.scheduler._finalize_run", mock_finalize_run)
+    monkeypatch.setattr("siliconcompiler.remote.client.Client._finalize_loop", mock_finalize_run)
     # Reconnect to the job.
     retcode = sc_remote.main()
 
@@ -570,3 +572,81 @@ def test_configure_add_add_whitelist_multiple(credentials_file, monkeypatch):
     assert set(generated_creds['directory_whitelist']) == \
         set([os.path.abspath('add_this'), os.path.abspath('add_this_too'),
              os.path.abspath('add_this_too_too')])
+
+
+@pytest.mark.parametrize("args", itertools.permutations(
+        ['configure', 'reconnect', 'cancel', 'delete'], r=2))
+def test_exclusive_args(args, monkeypatch):
+
+    monkeypatch.setattr('sys.argv', ['sc-remote',
+                                     f'-{args[0]}',
+                                     f'-{args[1]}'])
+
+    assert sc_remote.main() == 1
+
+
+@pytest.mark.parametrize("arg", ['reconnect', 'cancel', 'delete'])
+def test_require_cfg(arg, monkeypatch):
+
+    monkeypatch.setattr('sys.argv', ['sc-remote',
+                                     f'-{arg}'])
+
+    assert sc_remote.main() == 2
+
+
+def test_configure_list(monkeypatch):
+    monkeypatch.setattr('sys.argv', ['sc-remote',
+                                     '-configure',
+                                     '-list'])
+
+    with patch("siliconcompiler.remote.client.Client.print_configuration",
+               autospec=True) as mock:
+        assert sc_remote.main() == 0
+        assert mock.called
+
+
+def test_cancel(monkeypatch, gcd_chip):
+    gcd_chip.write_manifest('test.json')
+    monkeypatch.setattr('sys.argv', ['sc-remote',
+                                     '-cancel',
+                                     '-cfg', 'test.json'])
+
+    with patch("siliconcompiler.remote.client.Client.check",
+               autospec=True) as mock_check:
+        with patch("siliconcompiler.remote.client.Client.cancel_job",
+                   autospec=True) as mock:
+            assert sc_remote.main() == 0
+            assert mock_check.called
+            assert mock.called
+
+
+def test_delete(monkeypatch, gcd_chip):
+    gcd_chip.write_manifest('test.json')
+    monkeypatch.setattr('sys.argv', ['sc-remote',
+                                     '-delete',
+                                     '-cfg', 'test.json'])
+
+    with patch("siliconcompiler.remote.client.Client.check",
+               autospec=True) as mock_check:
+        with patch("siliconcompiler.remote.client.Client.delete_job",
+                   autospec=True) as mock:
+            assert sc_remote.main() == 0
+            assert mock_check.called
+            assert mock.called
+
+
+def test_empty_call(monkeypatch, gcd_chip):
+    gcd_chip.write_manifest('test.json')
+    monkeypatch.setattr('sys.argv', ['sc-remote',
+                                     '-cfg', 'test.json'])
+
+    with patch("siliconcompiler.remote.client.Client.check",
+               autospec=True) as mock_check:
+        with patch("siliconcompiler.remote.client.Client.check_job_status",
+                   autospec=True) as mock0:
+            with patch("siliconcompiler.remote.client.Client._report_job_status",
+                       autospec=True) as mock1:
+                assert sc_remote.main() == 0
+                assert mock_check.called
+                assert mock0.called
+                assert mock1.called
