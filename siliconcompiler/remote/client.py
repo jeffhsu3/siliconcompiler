@@ -1,25 +1,28 @@
 # Copyright 2020 Silicon Compiler Authors. All Rights Reserved.
 
 import json
+import multiprocessing
 import os
 import requests
 import shutil
 import time
-import urllib.parse
 import tarfile
 import tempfile
-import multiprocessing
 
 import os.path
+import urllib.parse
 
-from siliconcompiler import utils, SiliconCompilerError
+from siliconcompiler import utils
 from siliconcompiler import NodeStatus as SCNodeStatus
+
 from siliconcompiler._metadata import default_server
-from siliconcompiler.remote import JobStatus, NodeStatus
-from siliconcompiler.report.dashboard import DashboardType
 from siliconcompiler.flowgraph import RuntimeFlowgraph
-from siliconcompiler.scheduler.scheduler import Scheduler
+from siliconcompiler.scheduler import Scheduler
 from siliconcompiler.schema import Journal
+
+from siliconcompiler.utils.logging import get_console_formatter
+
+from siliconcompiler.remote import JobStatus, NodeStatus
 
 # Step name to use while logging
 remote_step_name = 'remote'
@@ -27,7 +30,7 @@ remote_step_name = 'remote'
 
 class ClientScheduler(Scheduler):
     def run_core(self):
-        Client(self._Scheduler__chip).run()
+        Client(self.project).run()
 
     def configure_nodes(self):
         return
@@ -43,6 +46,8 @@ class Client():
     def __init__(self, chip, default_server=default_server):
         self.__chip = chip
         self.__logger = self.__chip.logger.getChild('remote-client')
+        self.__dashboard = self.__chip._Project__dashboard
+        self.__name = self.__chip.design.name
 
         self.__default_server = default_server
 
@@ -76,9 +81,8 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
             if fail and not os.path.isfile(cfg_file) and \
                getattr(self, '_error_on_missing_file', True):
                 # Check if it's a file since its been requested by the user
-                raise SiliconCompilerError(
-                    f'Unable to find the credentials file: {cfg_file}',
-                    chip=self.__chip)
+                raise FileNotFoundError(
+                    f'Unable to find the credentials file: {cfg_file}')
         else:
             # Use the default config file path.
             cfg_file = utils.default_credentials_file()
@@ -103,10 +107,10 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
                 "directory_whitelist": []
             }
         if 'address' not in remote_cfg:
-            raise SiliconCompilerError(
+            raise ValueError(
                 'Improperly formatted remote server configuration - '
                 'please run "sc-remote -configure" and enter your server address and '
-                'credentials.', chip=self.__chip)
+                'credentials.')
 
         self.__config = remote_cfg
 
@@ -173,11 +177,11 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
             except requests.Timeout:
                 timeouts += 1
                 if timeouts > self.__max_timeouts:
-                    raise SiliconCompilerError('Server communications timed out', chip=self.__chip)
+                    raise TimeoutError('Server communications timed out')
                 time.sleep(self.__timeout)
                 continue
             except Exception as e:
-                raise SiliconCompilerError(f'Server communications error: {e}', chip=self.__chip)
+                raise RuntimeError(f'Server communications error: {e}')
 
             code = resp.status_code
             if 200 <= code and code < 300:
@@ -200,7 +204,7 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
             if error_action:
                 return error_action(code, msg)
             else:
-                raise SiliconCompilerError(f'Server responded with {code}: {msg}', chip=self.__chip)
+                raise RuntimeError(f'Server responded with {code}: {msg}')
 
     def cancel_job(self):
         '''
@@ -298,14 +302,15 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
             nodes_log = f'  {status.title()} ({num_nodes}): '
             log_nodes = []
             for node, _ in nodes:
-                node_len = len(node)
+                node_name = self.__node_information[node]['print']
+                node_len = len(node_name)
 
                 if node_len + line_len + 2 < self.__maxlinelength:
-                    log_nodes.append(node)
+                    log_nodes.append(node_name)
                     line_len += node_len + 2
                 else:
                     if len(log_nodes) == num_nodes - 1:
-                        log_nodes.append(node)
+                        log_nodes.append(node_name)
                     else:
                         log_nodes.append('...')
                     break
@@ -375,7 +380,7 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
             if SCNodeStatus.is_running(stat):
                 self.__logger.info(f'  {stat.title()} ({len(nodes)}):')
                 for node, node_info in nodes:
-                    running_log = f"    {node}"
+                    running_log = f"    {self.__node_information[node]['print']}"
                     if 'elapsed_time' in node_info:
                         running_log += f" ({node_info['elapsed_time']})"
                     self.__logger.info(running_log)
@@ -468,14 +473,9 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
         # Data is encrypted if user / key were specified.
         # run remote process
         if self.__chip.get('arg', 'step'):
-            raise SiliconCompilerError('Cannot pass [arg,step] parameter into remote flow.',
-                                       chip=self.__chip)
+            raise ValueError('Cannot pass [arg,step] parameter into remote flow.')
         if self.__chip.get('arg', 'index'):
-            raise SiliconCompilerError('Cannot pass [arg,index] parameter into remote flow.',
-                                       chip=self.__chip)
-
-        if not self.__chip._dash:
-            self.__chip.dashboard(type=DashboardType.CLI)
+            raise ValueError('Cannot pass [arg,index] parameter into remote flow.')
 
         # Only run the pre-process step if the job doesn't already have a remote ID.
         if not remote_resume:
@@ -483,7 +483,8 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
 
         # Run the job on the remote server, and wait for it to finish.
         # Set logger to indicate remote run
-        self.__chip._init_logger(step=self.STEP_NAME, index=None, in_run=True)
+        self.__chip._logger_console.setFormatter(
+            get_console_formatter(self.__chip, True, self.STEP_NAME, None))
 
         # Ask the remote server to start processing the requested step.
         self.__request_run()
@@ -493,8 +494,10 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
             self._run_loop()
         finally:
             # Restore logger
-            self.__chip._dash.end_of_run()
-            self.__chip._init_logger(in_run=True)
+            if self.__dashboard:
+                self.__dashboard.end_of_run()
+                self.__chip._logger_console.setFormatter(
+                    get_console_formatter(self.__chip, False, None, None))
 
     def __request_run(self):
         '''
@@ -504,7 +507,7 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
         remote_status = self.__check()
 
         if remote_status['status'] != 'ready':
-            raise SiliconCompilerError('Remote server is not available.', chip=self.__chip)
+            raise RuntimeError('Remote server is not available.')
 
         self.__print_tos(remote_status)
 
@@ -519,7 +522,7 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
             upload_file.flush()
 
             # We no longer need the collected files
-            shutil.rmtree(self.__chip._getcollectdir(jobname=self.__chip.get('option', 'jobname')))
+            shutil.rmtree(self.__chip.getcollectiondir())
 
         if 'pre_upload' in remote_status:
             self.__logger.info(remote_status['pre_upload']['message'])
@@ -529,7 +532,7 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
         # Redirected POST requests are translated to GETs. This is actually
         # part of the HTTP spec, so we need to manually follow the trail.
         post_params = {
-            'chip_cfg': self.__chip.schema.getdict(),
+            'chip_cfg': self.__chip.getdict(),
             'params': self.__get_post_params(include_job_id=True)
         }
 
@@ -571,7 +574,7 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
             key_type = self.__chip.get(*key, field='type')
 
             if 'dir' in key_type or 'file' in key_type:
-                for _, step, index in self.__chip.schema.get(*key, field=None).getvalues(
+                for _, step, index in self.__chip.get(*key, field=None).getvalues(
                         return_defvalue=False):
                     packages = self.__chip.get(*key, field='package', step=step, index=index)
                     if not isinstance(packages, list):
@@ -593,23 +596,22 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
         # Wrapper to allow for capturing of Ctrl+C
         try:
             self.__run_loop()
-            self._finalize_loop()
-        except KeyboardInterrupt:
+        except KeyboardInterrupt as e:
             manifest_path = self.remote_manifest()
             reconnect_cmd = f'sc-remote -cfg {manifest_path} -reconnect'
             cancel_cmd = f'sc-remote -cfg {manifest_path} -cancel'
             self.__logger.info('Disconnecting from remote job')
             self.__logger.info(f'To reconnect to this job use: {reconnect_cmd}')
             self.__logger.info(f'To cancel this job use: {cancel_cmd}')
-            raise SiliconCompilerError('Job canceled by user keyboard interrupt')
+            raise e
 
     def __import_run_manifests(self, starttimes):
         if not self.__setup_information_loaded:
             if self.__setup_information_fetched:
-                manifest = os.path.join(self.__chip.getworkdir(), f'{self.__chip.design}.pkg.json')
+                manifest = os.path.join(self.__chip.getworkdir(), f'{self.__name}.pkg.json')
                 if os.path.exists(manifest):
                     try:
-                        Journal.replay_file(self.__chip.schema, manifest)
+                        Journal.replay_file(self.__chip, manifest)
                         self.__setup_information_loaded = True
                         changed = True
                     except:  # noqa E722
@@ -628,10 +630,10 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
             manifest = os.path.join(
                 self.__chip.getworkdir(step=node_info["step"], index=node_info["index"]),
                 'outputs',
-                f'{self.__chip.design}.pkg.json')
+                f'{self.__name}.pkg.json')
             if os.path.exists(manifest):
                 try:
-                    Journal.replay_file(self.__chip.schema, manifest)
+                    Journal.replay_file(self.__chip, manifest)
                     node_info["imported"] = True
                     changed = True
                 except:  # noqa E722
@@ -643,14 +645,15 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
                 node_info["imported"] = True
                 changed = True
 
-        if changed and self.__chip._dash:
+        if changed and self.__dashboard:
             # Update dashboard if active
-            self.__chip._dash.update_manifest({"starttimes": starttimes})
+            self.__dashboard.update_manifest({"starttimes": starttimes})
 
         return changed
 
     def __ensure_run_loop_information(self):
-        self.__chip._init_logger(step=self.STEP_NAME, index='0', in_run=True)
+        self.__chip._logger_console.setFormatter(
+            get_console_formatter(self.__chip, True, self.STEP_NAME, None))
         if not self.__download_pool:
             self.__download_pool = multiprocessing.Pool()
 
@@ -663,7 +666,7 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
 
         self.__node_information = {}
         runtime = RuntimeFlowgraph(
-            self.__chip.schema.get("flowgraph", self.__chip.get('option', 'flow'), field='schema'),
+            self.__chip.get("flowgraph", self.__chip.get('option', 'flow'), field='schema'),
             from_steps=self.__chip.get('option', 'from'),
             to_steps=self.__chip.get('option', 'to'),
             prune_nodes=self.__chip.get('option', 'prune'))
@@ -674,7 +677,8 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
                 "step": step,
                 "index": index,
                 "imported": done,
-                "fetched": done
+                "fetched": done,
+                "print": f"{step}/{index}"
             }
             self.__node_information[f'{step}{index}'] = node_info
 
@@ -705,9 +709,9 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
             # preserve old starttimes
             starttimes = {**starttimes, **new_starttimes}
 
-            if self.__chip._dash:
+            if self.__dashboard:
                 # Update dashboard if active
-                self.__chip._dash.update_manifest({"starttimes": starttimes})
+                self.__dashboard.update_manifest({"starttimes": starttimes})
 
             if None in completed:
                 completed.remove(None)
@@ -726,6 +730,8 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
 
         # Done: try to fetch any node results which still haven't been retrieved.
         self.__logger.info('Remote job completed! Retrieving final results...')
+        if not self.__setup_information_fetched:
+            self.__schedule_fetch_result(None)
         for node, node_info in self.__node_information.items():
             if not node_info["fetched"]:
                 self.__schedule_fetch_result(node)
@@ -735,8 +741,8 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
         # Un-set the 'remote' option to avoid from/to-based summary/show errors
         self.__chip.unset('option', 'remote')
 
-        if self.__chip._dash:
-            self.__chip._dash.update_manifest()
+        if self.__dashboard:
+            self.__dashboard.update_manifest()
 
     def _finalize_loop(self):
         if self.__download_pool:
@@ -749,10 +755,11 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
     def __schedule_fetch_result(self, node):
         if node:
             self.__node_information[node]["fetched"] = True
-            self.__logger.info(f'    {node}')
+            self.__logger.info(f'    {self.__node_information[node]["print"]}')
         else:
             self.__setup_information_fetched = True
-        self.__download_pool.apply_async(Client._fetch_result, (self, node))
+        self.__download_pool.apply_async(Client._fetch_result, (self, node),
+                                         error_callback=lambda err: self.__logger.error(str(err)))
 
     def _fetch_result(self, node):
         '''
@@ -948,6 +955,7 @@ service, provided by SiliconCompiler, is not intended to process proprietary IP.
         attributes = self.__dict__.copy()
 
         attributes['_Client__download_pool'] = None
+        attributes['_Client__dashboard'] = None
 
         return attributes
 

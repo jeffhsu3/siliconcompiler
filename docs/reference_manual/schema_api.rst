@@ -25,6 +25,7 @@ Useful APIs
     BaseSchema.write_manifest
     BaseSchema.read_manifest
     BaseSchema.from_manifest
+    BaseSchema.active
 
 **Editing schema:**
 
@@ -35,10 +36,15 @@ Useful APIs
     EditableSchema.remove
     EditableSchema.search
 
-Metrics Classes
+Schema Classes
 ===============
 
 .. autoclass:: siliconcompiler.DesignSchema
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
+.. autoclass:: siliconcompiler.LibrarySchema
     :members:
     :show-inheritance:
     :inherited-members:
@@ -73,6 +79,11 @@ Metrics Classes
     :show-inheritance:
     :inherited-members:
 
+.. autoclass:: siliconcompiler.TaskSchema
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
 .. autoclass:: siliconcompiler.ASICSchema
     :members:
     :show-inheritance:
@@ -83,8 +94,51 @@ Metrics Classes
     :show-inheritance:
     :inherited-members:
 
-Full API
-========
+.. autoclass:: siliconcompiler.StdCellLibrarySchema
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
+ASIC Constraint Classes
+=======================
+
+.. autoclass:: siliconcompiler.constraints.ASICTimingConstraintSchema
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
+.. autoclass:: siliconcompiler.constraints.ASICTimingScenarioSchema
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
+.. autoclass:: siliconcompiler.constraints.ASICAreaConstraint
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
+.. autoclass:: siliconcompiler.constraints.ASICPinConstraints
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
+.. autoclass:: siliconcompiler.constraints.ASICPinConstraint
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
+.. autoclass:: siliconcompiler.constraints.ASICComponentConstraints
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
+.. autoclass:: siliconcompiler.constraints.ASICComponentConstraint
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
+Core Schema Classes
+===================
 
 .. autoclass:: BaseSchema
     :members:
@@ -98,9 +152,6 @@ Full API
     :show-inheritance:
     :inherited-members:
 
-.. autoclass:: CommandLineSchema
-    :members:
-
 .. autoclass:: Journal
     :members:
 
@@ -109,20 +160,13 @@ Full API
     :show-inheritance:
     :inherited-members:
 
-.. autoclass:: siliconcompiler.dependencyschema.DependencySchema
-    :members:
-    :show-inheritance:
-    :inherited-members:
-
-.. autoclass:: PackageSchema
-    :members:
-    :show-inheritance:
-    :inherited-members:
-
 .. autoclass:: Parameter
     :members:
 
 .. autoclass:: siliconcompiler.schema.parametervalue.NodeListValue
+    :members:
+
+.. autoclass:: siliconcompiler.schema.parametervalue.NodeSetValue
     :members:
 
 .. autoclass:: siliconcompiler.schema.parametervalue.NodeValue
@@ -157,6 +201,27 @@ Full API
     :members:
     :undoc-members:
 
+Supporting Classes
+==================
+
+.. autoclass:: siliconcompiler.dependencyschema.DependencySchema
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
+.. autoclass:: siliconcompiler.cmdlineschema.CommandLineSchema
+    :members:
+
+.. autoclass:: siliconcompiler.pathschema.PathSchema
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
+.. autoclass:: siliconcompiler.filesetschema.FileSetSchema
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
 .. autoclass:: siliconcompiler.flowgraph.FlowgraphNodeSchema
     :members:
     :show-inheritance:
@@ -164,11 +229,6 @@ Full API
 
 .. autoclass:: siliconcompiler.flowgraph.RuntimeFlowgraph
     :members:
-
-.. autoclass:: siliconcompiler.tool.TaskSchema
-    :members:
-    :show-inheritance:
-    :inherited-members:
 
 .. autoclass:: siliconcompiler.tool.TaskError
     :members:
@@ -181,6 +241,11 @@ Full API
     :inherited-members:
 
 .. autoclass:: siliconcompiler.tool.TaskExecutableNotFound
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
+.. autoclass:: siliconcompiler.PackageSchema
     :members:
     :show-inheritance:
     :inherited-members:

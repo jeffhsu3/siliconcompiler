@@ -4,6 +4,8 @@
 # SC dependencies outside of its directory, since it may be used by tool drivers
 # that have isolated Python environments.
 
+from typing import Dict, Tuple
+
 from .parameter import Parameter
 from .baseschema import BaseSchema
 
@@ -15,15 +17,26 @@ class SafeSchema(BaseSchema):
     '''
 
     @staticmethod
-    def __is_dict_leaf(manifest, keypath, version):
+    def __is_dict_leaf(manifest: Dict, keypath: Tuple[str], version: str) -> Parameter:
         try:
             return Parameter.from_dict(manifest, keypath, version)
         except:  # noqa E722
             return None
 
-    def _from_dict(self, manifest, keypath, version=None):
+    @classmethod
+    def _getdict_type(cls) -> str:
+        """
+        Returns the meta data for getdict
+        """
+
+        return "SafeSchema"
+
+    def _from_dict(self, manifest: Dict, keypath: Tuple[str], version: str = None) -> None:
         if not isinstance(manifest, dict):
             return
+
+        if "__meta__" in manifest:
+            del manifest["__meta__"]
 
         for key, data in manifest.items():
             obj = SafeSchema.__is_dict_leaf(data, keypath + [key], version)
@@ -35,3 +48,13 @@ class SafeSchema(BaseSchema):
                 self._BaseSchema__default = obj
             else:
                 self._BaseSchema__manifest[key] = obj
+
+    @classmethod
+    def from_manifest(cls, filepath: str = None, cfg: Dict = None) -> "SafeSchema":
+        if filepath:
+            cfg = BaseSchema._read_manifest(filepath)
+
+        if cfg and "__meta__" in cfg:
+            del cfg["__meta__"]
+
+        return super().from_manifest(filepath=None, cfg=cfg)

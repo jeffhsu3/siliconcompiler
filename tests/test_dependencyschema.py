@@ -1,5 +1,4 @@
 import graphviz
-import logging
 import pytest
 
 import os.path
@@ -7,13 +6,12 @@ import os.path
 from unittest.mock import patch
 
 from siliconcompiler.schema import NamedSchema, BaseSchema
-from siliconcompiler.schema import EditableSchema, Parameter
 from siliconcompiler.dependencyschema import DependencySchema
 
 
 def test_init():
     schema = DependencySchema()
-    assert schema.getkeys() == tuple(["deps", "package"])
+    assert schema.getkeys() == ("deps",)
     assert schema.get("deps") == []
 
 
@@ -36,22 +34,29 @@ def test_add_dep():
     assert schema.get("deps", field="lock") is True
 
 
-def test_add_dep_confirm_reset():
-    class Test(NamedSchema):
-        def __init__(self):
-            super().__init__("thisname")
-            self.state_info = "notthis"
-
-        def _reset(self):
-            super()._reset()
-            self.state_info = None
-
+def test_has_dep():
     schema = DependencySchema()
 
-    dep = Test()
-    assert dep.state_info == "notthis"
+    assert schema.has_dep("thisname") is False
+    assert schema.add_dep(NamedSchema("thisname"))
+    assert schema.has_dep("thisname") is True
+
+
+def test_has_dep_with_object():
+    schema = DependencySchema()
+
+    dep = NamedSchema("thisname")
+    assert schema.has_dep("thisname") is False
     assert schema.add_dep(dep)
-    assert dep.state_info is None
+    assert schema.has_dep(dep) is True
+
+
+def test_has_dep_invalid():
+    schema = DependencySchema()
+
+    assert schema.has_dep(1) is False
+    assert schema.has_dep(BaseSchema()) is False
+    assert schema.has_dep(NamedSchema) is False
 
 
 def test_add_dep_clobber():
@@ -78,6 +83,13 @@ def test_add_dep_no_clobber():
     assert schema.get("deps") == ["thisname"]
 
 
+def test_add_dep_unnamed():
+    schema = DependencySchema()
+
+    with pytest.raises(ValueError, match="Cannot add an unnamed dependency"):
+        schema.add_dep(NamedSchema())
+
+
 def test_get_dep_not_found():
     schema = DependencySchema()
 
@@ -100,6 +112,17 @@ def test_remove_dep():
     assert schema.get("deps") == []
 
 
+def test_remove_dep_with_object():
+    schema = DependencySchema()
+    dep = NamedSchema("thisname")
+    schema.add_dep(dep)
+    assert schema.get_dep("thisname")
+    assert schema.remove_dep(dep) is True
+    assert schema.get("deps", field="lock") is True
+    assert schema.get_dep() == []
+    assert schema.get("deps") == []
+
+
 def test_get_dep_empty():
     assert DependencySchema().get_dep() == []
 
@@ -107,8 +130,8 @@ def test_get_dep_empty():
 def test_get_dep():
     class Test(NamedSchema, DependencySchema):
         def __init__(self, name):
-            NamedSchema.__init__(self, name)
-            DependencySchema.__init__(self)
+            super().__init__()
+            self.set_name(name)
 
     schema = DependencySchema()
 
@@ -129,8 +152,8 @@ def test_get_dep():
 def test_get_dep_no_hier():
     class Test(NamedSchema, DependencySchema):
         def __init__(self, name):
-            NamedSchema.__init__(self, name)
-            DependencySchema.__init__(self)
+            super().__init__()
+            self.set_name(name)
 
     schema = DependencySchema()
 
@@ -151,8 +174,8 @@ def test_get_dep_no_hier():
 def test_get_dep_repeats():
     class Test(NamedSchema, DependencySchema):
         def __init__(self, name):
-            NamedSchema.__init__(self, name)
-            DependencySchema.__init__(self)
+            super().__init__()
+            self.set_name(name)
 
     schema = DependencySchema()
 
@@ -174,8 +197,8 @@ def test_get_dep_repeats():
 def test_get_dep_non_dep():
     class Test(NamedSchema, DependencySchema):
         def __init__(self, name):
-            NamedSchema.__init__(self, name)
-            DependencySchema.__init__(self)
+            super().__init__()
+            self.set_name(name)
 
     schema = DependencySchema()
 
@@ -198,11 +221,56 @@ def test_get_dep_non_dep():
         [dep00, dep10, dep20, dep01, dep11, dep21]
 
 
+def test_get_dep_hier():
+    class Test(NamedSchema, DependencySchema):
+        def __init__(self, name):
+            super().__init__()
+            self.set_name(name)
+
+    schema = DependencySchema()
+
+    dep00 = Test("level0-0")
+    dep01 = Test("level0-1")
+    dep02 = Test("level0-2")
+
+    assert dep00.add_dep(dep01)
+    assert dep01.add_dep(dep02)
+
+    assert schema.add_dep(dep00)
+
+    assert schema.get_dep("level0-0") is dep00
+    assert schema.get_dep("level0-0.level0-1") is dep01
+    assert schema.get_dep("level0-0.level0-1.level0-2") is dep02
+
+
+def test_get_dep_hier_with_non_dep():
+    class Test(NamedSchema, DependencySchema):
+        def __init__(self, name):
+            super().__init__()
+            self.set_name(name)
+
+    schema = DependencySchema()
+
+    dep00 = Test("level0-0")
+    dep01 = NamedSchema("level0-1")
+
+    assert dep00.add_dep(dep01)
+
+    assert schema.add_dep(dep00)
+
+    assert schema.get_dep("level0-0") is dep00
+    assert schema.get_dep("level0-0.level0-1") is dep01
+
+    with pytest.raises(KeyError,
+                       match="level0-1.notthis does not contain dependency information"):
+        schema.get_dep("level0-0.level0-1.notthis")
+
+
 def test_get_dep_circle():
     class Test(NamedSchema, DependencySchema):
         def __init__(self, name):
-            NamedSchema.__init__(self, name)
-            DependencySchema.__init__(self)
+            super().__init__()
+            self.set_name(name)
 
     schema = DependencySchema()
 
@@ -224,8 +292,8 @@ def test_get_dep_circle():
 def test_write_depgraph_no_graphviz_exe():
     class Test(NamedSchema, DependencySchema):
         def __init__(self, name):
-            NamedSchema.__init__(self, name)
-            DependencySchema.__init__(self)
+            super().__init__()
+            self.set_name(name)
 
     schema = Test("top")
 
@@ -250,11 +318,11 @@ def test_write_depgraph_no_graphviz_exe():
         render.assert_called_once()
 
 
-def test_write_depgraph():
+def test_write_depgraph(has_graphviz):
     class Test(NamedSchema, DependencySchema):
         def __init__(self, name):
-            NamedSchema.__init__(self, name)
-            DependencySchema.__init__(self)
+            super().__init__()
+            self.set_name(name)
 
     schema = Test("top")
 
@@ -273,11 +341,11 @@ def test_write_depgraph():
     assert os.path.exists("test.png")
 
 
-def test_write_depgraph_alt_config():
+def test_write_depgraph_alt_config(has_graphviz):
     class Test(NamedSchema, DependencySchema):
         def __init__(self, name):
-            NamedSchema.__init__(self, name)
-            DependencySchema.__init__(self)
+            super().__init__()
+            self.set_name(name)
 
     schema = Test("top")
 
@@ -296,11 +364,11 @@ def test_write_depgraph_alt_config():
     assert os.path.exists("test.png")
 
 
-def test_write_depgraph_repeats():
+def test_write_depgraph_repeats(has_graphviz):
     class Test(NamedSchema, DependencySchema):
         def __init__(self, name):
-            NamedSchema.__init__(self, name)
-            DependencySchema.__init__(self)
+            super().__init__()
+            self.set_name(name)
 
     schema = Test("top")
 
@@ -320,11 +388,11 @@ def test_write_depgraph_repeats():
     assert os.path.exists("test.png")
 
 
-def test_write_depgraph_circle():
+def test_write_depgraph_circle(has_graphviz):
     class Test(NamedSchema, DependencySchema):
         def __init__(self, name):
-            NamedSchema.__init__(self, name)
-            DependencySchema.__init__(self)
+            super().__init__()
+            self.set_name(name)
 
     schema = Test("top")
 
@@ -351,9 +419,9 @@ def test_populate_deps_empty():
 
 def test_populate_deps():
     class Test(NamedSchema, DependencySchema):
-        def __init__(self, name):
-            NamedSchema.__init__(self, name)
-            DependencySchema.__init__(self)
+        def __init__(self, name=None):
+            super().__init__()
+            self.set_name(name)
 
     schema = Test("top")
 
@@ -370,16 +438,16 @@ def test_populate_deps():
 
     check = Test.from_manifest("test", cfg=schema.getdict())
     assert check.get_dep() == []
-    module_map = {obj.name(): obj for obj in schema.get_dep()}
+    module_map = {obj.name: obj for obj in schema.get_dep()}
     check._populate_deps(module_map)
     assert check.get_dep() == schema.get_dep()
 
 
 def test_populate_deps_missing():
     class Test(NamedSchema, DependencySchema):
-        def __init__(self, name):
-            NamedSchema.__init__(self, name)
-            DependencySchema.__init__(self)
+        def __init__(self, name=None):
+            super().__init__()
+            self.set_name(name)
 
     schema = Test("top")
 
@@ -402,8 +470,8 @@ def test_populate_deps_missing():
 def test_populate_deps_already_populated():
     class Test(NamedSchema, DependencySchema):
         def __init__(self, name):
-            NamedSchema.__init__(self, name)
-            DependencySchema.__init__(self)
+            super().__init__()
+            self.set_name(name)
 
     schema = Test("top")
 
@@ -422,313 +490,6 @@ def test_populate_deps_already_populated():
     check.add_dep(dep00)
 
     assert check.get_dep() == [dep00, dep10]
-    module_map = {obj.name(): obj for obj in schema.get_dep()}
+    module_map = {obj.name: obj for obj in schema.get_dep()}
     check._populate_deps(module_map)
     assert check.get_dep() == [dep00, dep10]
-
-
-def test_get_registered_sources():
-    schema = DependencySchema()
-    assert schema.getkeys("package") == tuple([])
-
-
-def test_register_package():
-    schema = DependencySchema()
-    schema.register_package("testsource", "file://.")
-    assert schema.get("package", "testsource", "root") == "file://."
-    assert schema.get("package", "testsource", "tag") is None
-
-
-def test_register_package_overwrite():
-    schema = DependencySchema()
-    schema.register_package("testsource", "file://.")
-    schema.register_package("testsource", "file://test")
-    assert schema.get("package", "testsource", "root") == "file://test"
-    assert schema.get("package", "testsource", "tag") is None
-
-
-def test_register_package_with_ref():
-    schema = DependencySchema()
-    schema.register_package("testsource", "file://.", "ref")
-    assert schema.get("package", "testsource", "root") == "file://."
-    assert schema.get("package", "testsource", "tag") == "ref"
-
-
-def test_register_package_with_file():
-    schema = DependencySchema()
-    with open("test.txt", "w") as f:
-        f.write("test")
-
-    schema.register_package("testsource", "test.txt")
-    assert schema.get("package", "testsource", "root") == os.path.abspath(".")
-    assert schema.get("package", "testsource", "tag") is None
-
-
-def test_find_files():
-    class Test(DependencySchema):
-        def __init__(self):
-            super().__init__()
-
-            schema = EditableSchema(self)
-            schema.insert("file", Parameter("file"))
-
-    test = Test()
-    test.register_package("testsource", "file://.")
-    param = test.set("file", "test.txt")
-    param.set("testsource", field="package")
-
-    with open("test.txt", "w") as f:
-        f.write("test")
-
-    assert test.find_files("file") == os.path.abspath("test.txt")
-
-
-def test_find_files_no_source():
-    class Test(DependencySchema):
-        def __init__(self):
-            super().__init__()
-
-            schema = EditableSchema(self)
-            schema.insert("file", Parameter("file"))
-
-    test = Test()
-    param = test.set("file", "test.txt")
-    param.set("testsource", field="package")
-
-    with pytest.raises(ValueError, match="Resolver for testsource not provided"):
-        test.find_files("file")
-
-
-def test_find_files_dir():
-    class Test(DependencySchema):
-        def __init__(self):
-            super().__init__()
-
-            schema = EditableSchema(self)
-            schema.insert("dir", Parameter("dir"))
-
-    test = Test()
-    test.register_package("testsource", "file://.")
-    param = test.set("dir", "test")
-    param.set("testsource", field="package")
-
-    os.makedirs("test", exist_ok=True)
-
-    assert test.find_files("dir") == os.path.abspath("test")
-
-
-def test_find_files_no_sources():
-    class Test(DependencySchema):
-        def __init__(self):
-            super().__init__()
-
-            schema = EditableSchema(self)
-            schema.insert("dir", Parameter("dir"))
-
-    test = Test()
-    assert test.set("dir", "test")
-
-    os.makedirs("test", exist_ok=True)
-
-    assert test.find_files("dir") == os.path.abspath("test")
-
-
-def test_find_files_cwd():
-    class Test(DependencySchema):
-        cwd = "cwd"
-
-        def __init__(self):
-            super().__init__()
-
-            schema = EditableSchema(self)
-            schema.insert("dir", Parameter("dir"))
-
-    test = Test()
-    assert test.set("dir", "test")
-
-    os.makedirs("cwd/test", exist_ok=True)
-
-    assert test.find_files("dir") == os.path.abspath("cwd/test")
-
-
-def test_find_files_collection_dir():
-    class Test(DependencySchema):
-        calls = 0
-
-        def collection_dir(self):
-            self.calls += 1
-            return os.path.abspath("collect")
-
-        def __init__(self):
-            super().__init__()
-
-            schema = EditableSchema(self)
-            schema.insert("dir", Parameter("dir"))
-
-    test = Test()
-    assert test.set("dir", "test")
-
-    os.makedirs("collect/test_3a52ce780950d4d969792a2559cd519d7ee8c727", exist_ok=True)
-
-    assert test.find_files("dir") == \
-        os.path.abspath("collect/test_3a52ce780950d4d969792a2559cd519d7ee8c727")
-    assert test.calls == 1
-
-
-def test_find_files_keypath():
-    class Test(DependencySchema):
-        def __init__(self):
-            super().__init__()
-
-            schema = EditableSchema(self)
-            schema.insert("file", Parameter("file"))
-            schema.insert("ref", Parameter("dir"))
-
-    class Root(BaseSchema):
-        def __init__(self):
-            super().__init__()
-
-            schema = EditableSchema(self)
-            schema.insert("ref", Parameter("dir"))
-            schema.insert("test", Test())
-
-    root = Root()
-    test = root.get("test", field="schema")
-    test.register_package("keyref", "key://ref")
-    assert root.set("ref", "test")
-    os.makedirs("test", exist_ok=True)
-    param = test.set("file", "test.txt")
-    param.set("keyref", field="package")
-
-    with open("test/test.txt", "w") as f:
-        f.write("test")
-
-    assert test.find_files("file") == os.path.abspath("test/test.txt")
-
-
-def test_find_package():
-    schema = DependencySchema()
-    schema.register_package("testsource", "file://.")
-    assert schema.find_package("testsource") == os.path.abspath(".")
-
-
-def test_find_package_not_found():
-    schema = DependencySchema()
-    with pytest.raises(ValueError, match="testsource is not a recognized source"):
-        schema.find_package("testsource")
-
-
-def test_find_package_keypath():
-    class Test(DependencySchema):
-        def __init__(self):
-            super().__init__()
-
-            schema = EditableSchema(self)
-            schema.insert("file", Parameter("file"))
-            schema.insert("ref", Parameter("dir"))
-
-    class Root(BaseSchema):
-        def __init__(self):
-            super().__init__()
-
-            schema = EditableSchema(self)
-            schema.insert("ref", Parameter("dir"))
-            schema.insert("test", Test())
-
-    root = Root()
-    test = root.get("test", field="schema")
-    test.register_package("keyref", "key://ref")
-    assert root.set("ref", "test")
-    os.makedirs("test", exist_ok=True)
-
-    assert test.find_package("keyref") == os.path.abspath("test")
-
-
-def test_check_filepaths_empty():
-    schema = DependencySchema()
-    edit = EditableSchema(schema)
-    param = Parameter("[dir]")
-    edit.insert("directory", param)
-
-    assert schema.check_filepaths() is True
-
-
-def test_check_filepaths_found():
-    schema = DependencySchema()
-    edit = EditableSchema(schema)
-    param = Parameter("[dir]")
-    edit.insert("directory", param)
-
-    os.makedirs("test0", exist_ok=True)
-
-    assert schema.set("directory", "test0")
-
-    assert schema.check_filepaths() is True
-
-
-def test_check_filepaths_not_found_no_logger():
-    schema = DependencySchema()
-    edit = EditableSchema(schema)
-    param = Parameter("[dir]")
-    edit.insert("directory", param)
-
-    assert schema.set("directory", "test0")
-
-    assert schema.check_filepaths() is False
-
-
-def test_check_filepaths_not_found_logger(caplog):
-    schema = DependencySchema()
-    edit = EditableSchema(schema)
-    param = Parameter("[dir]")
-    edit.insert("directory", param)
-
-    assert schema.set("directory", "test0")
-
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    schema.logger = logger
-
-    assert schema.check_filepaths() is False
-    assert "Parameter [directory] path test0 is invalid" in caplog.text
-
-
-def test_check_filepaths_cwd():
-    class Test(DependencySchema):
-        cwd = "cwd"
-
-        def __init__(self):
-            super().__init__()
-
-            schema = EditableSchema(self)
-            schema.insert("dir", Parameter("dir"))
-
-    test = Test()
-    assert test.set("dir", "test")
-
-    os.makedirs("cwd/test", exist_ok=True)
-
-    assert test.check_filepaths() is True
-
-
-def test_check_filepaths_collection_dir():
-    class Test(DependencySchema):
-        calls = 0
-
-        def collection_dir(self):
-            self.calls += 1
-            return os.path.abspath("collect")
-
-        def __init__(self):
-            super().__init__()
-
-            schema = EditableSchema(self)
-            schema.insert("dir", Parameter("dir"))
-
-    test = Test()
-    assert test.set("dir", "test")
-
-    os.makedirs("collect/test_3a52ce780950d4d969792a2559cd519d7ee8c727", exist_ok=True)
-
-    assert test.check_filepaths() is True
-    assert test.calls == 1

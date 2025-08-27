@@ -1,15 +1,18 @@
 # Copyright 2024 Silicon Compiler Authors. All Rights Reserved.
-
 import argparse
 import glob
+import re
+import shutil
 import subprocess
 import sys
-import shutil
-import re
+
 import os.path
+
 from collections.abc import Container
 from pathlib import Path
+
 import siliconcompiler
+
 from siliconcompiler import RecordSchema
 
 
@@ -146,9 +149,10 @@ def _get_tools_list():
 
 def _recommended_tool_groups(tools):
     groups = {
-        "asic": {"sv2v", "yosys", "openroad", "klayout"},
-        "fpga": {"sv2v", "yosys", "vpr"},
-        "digital-simulation": {"verilator", "icarus", "gtkwave"},
+        "asic": {"sv2v", "yosys", "yosys-slang", "openroad", "klayout"},
+        "asic-hls": {"bambu", "yosys", "yosys-slang", "openroad", "klayout"},
+        "fpga": {"sv2v", "yosys", "yosys-slang", "vpr"},
+        "digital-simulation": {"verilator", "icarus", "surfer"},
         "analog-simulation": {"xyce"}
     }
 

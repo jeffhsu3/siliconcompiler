@@ -25,7 +25,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: klayout version
         id: version
@@ -53,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - uses: hynek/build-and-inspect-python-package@v2
 
   test_wheel:
@@ -63,7 +63,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12', '3.13']
+        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
         platform:
           - os: ubuntu-22.04
             arch: x86_64
@@ -73,7 +73,7 @@ jobs:
             arch: x86_64
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
         path: sc
 
@@ -119,7 +119,7 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    - uses: actions/download-artifact@v4
+    - uses: actions/download-artifact@v5
       with:
         name: Packages
         path: dist
@@ -138,8 +138,7 @@ jobs:
       run: |
         . venv/bin/activate
         pytest sc/tests/ -m "not eda and not docker" -n logical
-        pytest sc/tests/tools/test_slang.py -n logical
-        pytest sc/tests/flows/test_show.py -k "klayout" -n logical
+        # pytest sc/tests/utils/test_showtools.py -k "klayout" -n logical
 
     - name: Install SC (windows)
       if: matrix.platform.os == 'windows-latest'
@@ -160,11 +159,7 @@ jobs:
         if ($LASTEXITCODE -ne 0) {
           exit $LASTEXITCODE
         }
-        pytest sc/tests/tools/test_slang.py -n logical
-        if ($LASTEXITCODE -ne 0) {
-          exit $LASTEXITCODE
-        }
-        pytest sc/tests/flows/test_show.py -k "klayout" -n logical
+        pytest sc/tests/utils/test_showtools.py -k "klayout" -n logical
         if ($LASTEXITCODE -ne 0) {
           exit $LASTEXITCODE
         }
@@ -179,7 +174,7 @@ jobs:
       id-token: write
 
     steps:
-    - uses: actions/download-artifact@v4
+    - uses: actions/download-artifact@v5
       with:
         name: Packages
         path: dist

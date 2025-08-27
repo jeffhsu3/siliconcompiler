@@ -4,7 +4,7 @@ from siliconcompiler import NodeStatus
 from siliconcompiler.tools._common import input_file_node_name, get_tool_task
 
 from siliconcompiler.flowgraph import RuntimeFlowgraph
-from siliconcompiler.scheduler.schedulernode import SchedulerNode
+from siliconcompiler.scheduler import SchedulerNode
 
 
 ###########################################################################
@@ -16,16 +16,16 @@ def _check_flowgraph_io(chip, nodes=None):
     flow = chip.get('option', 'flow')
 
     runtime_full = RuntimeFlowgraph(
-        chip.schema.get("flowgraph", flow, field='schema'),
+        chip.get("flowgraph", flow, field='schema'),
         to_steps=chip.get('option', 'to'),
         prune_nodes=chip.get('option', 'prune'))
     runtime_flow = RuntimeFlowgraph(
-        chip.schema.get("flowgraph", flow, field='schema'),
+        chip.get("flowgraph", flow, field='schema'),
         args=(chip.get('arg', 'step'), chip.get('arg', 'index')),
         from_steps=chip.get('option', 'from'),
         to_steps=chip.get('option', 'to'),
         prune_nodes=chip.get('option', 'prune'))
-    record = chip.schema.get("record", field='schema')
+    record = chip.get("record", field='schema')
 
     if not nodes:
         nodes = runtime_flow.get_nodes()
@@ -62,25 +62,25 @@ def _check_flowgraph_io(chip, nodes=None):
                 manifest = f'{design}.pkg.json'
                 inputs = [inp for inp in os.listdir(in_step_out_dir) if inp != manifest]
             else:
-                in_tool, _ = get_tool_task(chip, in_step, in_index, flow=flow)
-                task_class = chip.get("tool", in_tool, field="schema")
-                task_class.set_runtime(chip, step=in_step, index=in_index)
+                in_tool, in_task = get_tool_task(chip, in_step, in_index, flow=flow)
+                task_class = chip.get("tool", in_tool, "task", in_task, field="schema")
 
-                inputs = task_class.get_output_files()
+                with task_class.runtime(SchedulerNode(chip, in_step, in_index)) as task:
+                    inputs = task.get_output_files()
 
             for inp in inputs:
                 node_inp = input_file_node_name(inp, in_step, in_index)
                 if node_inp in requirements:
                     inp = node_inp
                 if inp in all_inputs:
-                    chip.logger.error(f'Invalid flow: {step}{index} '
+                    chip.logger.error(f'Invalid flow: {step}/{index} '
                                       f'receives {inp} from multiple input tasks')
                     return False
                 all_inputs.add(inp)
 
         for requirement in requirements:
             if requirement not in all_inputs:
-                chip.logger.error(f'Invalid flow: {step}{index} will '
+                chip.logger.error(f'Invalid flow: {step}/{index} will '
                                   f'not receive required input {requirement}.')
                 return False
 
@@ -95,7 +95,7 @@ def _get_flowgraph_information(chip, flow, io=True):
     chip.schema = chip.schema.copy()
 
     # Setup nodes
-    node_exec_order = chip.schema.get("flowgraph", flow, field="schema").get_execution_order()
+    node_exec_order = chip.get("flowgraph", flow, field="schema").get_execution_order()
     if io:
         prev_flow = chip.get("option", "flow")
         chip.set("option", "flow", flow)
@@ -107,12 +107,12 @@ def _get_flowgraph_information(chip, flow, io=True):
     node_rank = {}
     for rank, rank_nodes in enumerate(node_exec_order):
         for step, index in rank_nodes:
-            node_rank[f'{step}{index}'] = rank
+            node_rank[f'{step}/{index}'] = rank
 
     graph_inputs = {}
     all_graph_inputs = set()
     if io:
-        for step, index in chip.schema.get("flowgraph", flow, field="schema").get_nodes():
+        for step, index in chip.get("flowgraph", flow, field="schema").get_nodes():
             tool, task = get_tool_task(chip, step, index, flow=flow)
             for keypath in chip.get('tool', tool, 'task', task, 'require', step=step, index=index):
                 key = tuple(keypath.split(','))
@@ -122,7 +122,7 @@ def _get_flowgraph_information(chip, flow, io=True):
         for inputs in graph_inputs.values():
             all_graph_inputs.update(inputs)
 
-    exit_nodes = [f'{step}{index}' for step, index in chip.schema.get(
+    exit_nodes = [f'{step}/{index}' for step, index in chip.get(
         "flowgraph", flow, field="schema").get_exit_nodes()]
 
     nodes = {}
@@ -135,11 +135,11 @@ def _get_flowgraph_information(chip, flow, io=True):
         return label.replace("<", r"\<").replace(">", r"\>")
 
     all_nodes = [(step, index) for step, index in sorted(
-                    chip.schema.get("flowgraph", flow, field="schema").get_nodes())
+                    chip.get("flowgraph", flow, field="schema").get_nodes())
                  if chip.get('record', 'status', step=step, index=index) != NodeStatus.SKIPPED]
 
-    runtime_flow = RuntimeFlowgraph(chip.schema.get("flowgraph", flow, field='schema'))
-    record = chip.schema.get("record", field='schema')
+    runtime_flow = RuntimeFlowgraph(chip.get("flowgraph", flow, field='schema'))
+    record = chip.get("record", field='schema')
 
     for step, index in all_nodes:
         tool, task = get_tool_task(chip, step, index, flow=flow)
@@ -153,7 +153,7 @@ def _get_flowgraph_information(chip, flow, io=True):
             inputs = []
             outputs = []
 
-        node = f'{step}{index}'
+        node = f'{step}/{index}'
         if io and (step, index) in graph_inputs:
             inputs.extend(graph_inputs[(step, index)])
 
@@ -173,11 +173,12 @@ def _get_flowgraph_information(chip, flow, io=True):
 
         rank_diff = {}
         for in_step, in_index in runtime_flow.get_node_inputs(step, index, record=record):
-            rank_diff[f'{in_step}{in_index}'] = node_rank[node] - node_rank[f'{in_step}{in_index}']
+            in_node_name = f'{in_step}/{in_index}'
+            rank_diff[in_node_name] = node_rank[node] - node_rank[in_node_name]
         nodes[node]["rank_diff"] = rank_diff
 
     for step, index in all_nodes:
-        node = f'{step}{index}'
+        node = f'{step}/{index}'
         if io:
             # get inputs
             edge_stats = {}
@@ -189,9 +190,9 @@ def _get_flowgraph_information(chip, flow, io=True):
                         infile = input_file_node_name(infile, in_step, in_index)
                         if infile not in nodes[node]["file_inputs"]:
                             continue
-                    in_node_name = f"{in_step}{in_index}"
+                    in_node_name = f"{in_step}/{in_index}"
                     outlabel = f"{in_node_name}:output-{clean_label(outfile)}"
-                    inlabel = f"{step}{index}:input-{clean_label(infile)}"
+                    inlabel = f"{step}/{index}:input-{clean_label(infile)}"
 
                     if in_node_name not in edge_stats:
                         edge_stats[in_node_name] = {
@@ -229,12 +230,12 @@ def _get_flowgraph_information(chip, flow, io=True):
 
             if (step, index) in graph_inputs:
                 for key in graph_inputs[(step, index)]:
-                    inlabel = f"{step}{index}:input-{clean_label(key)}"
+                    inlabel = f"{step}/{index}:input-{clean_label(key)}"
                     edges.append((key, inlabel, 1))
         else:
             all_inputs = []
             for in_step, in_index in chip.get('flowgraph', flow, step, index, 'input'):
-                all_inputs.append(f'{in_step}{in_index}')
+                all_inputs.append(f'{in_step}/{in_index}')
             for item in all_inputs:
                 edges.append((item, node, 1 if node in exit_nodes else 2))
 

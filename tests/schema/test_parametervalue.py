@@ -6,7 +6,7 @@ import os.path
 
 from siliconcompiler.schema.parametervalue import \
     NodeValue, DirectoryNodeValue, FileNodeValue, NodeListValue, \
-    PathNodeValue
+    PathNodeValue, NodeSetValue
 from siliconcompiler.schema.parametertype import NodeEnumType
 
 enum1 = NodeEnumType("one", "two", "three")
@@ -17,6 +17,17 @@ def test_get_inner_value():
     value = NodeValue("str")
 
     assert isinstance(value.get(field=None), NodeValue)
+
+
+def test_gettcl():
+    value = NodeValue("str")
+
+    value.set("test")
+    assert value.gettcl() == '"test"'
+
+
+def test_gettcl_unset():
+    assert NodeValue("str").gettcl() == ""
 
 
 def test_set():
@@ -159,6 +170,80 @@ def test_value_from_dict():
     assert value.get(field='signature') == "testsig"
 
 
+@pytest.mark.parametrize(
+    "type", [
+        "str",
+        "{str}",
+        "int",
+        "{int}",
+        "float",
+        "{float}",
+        "bool",
+        "<one,two,three>",
+        "{<one,two,three>}",
+        "[str]",
+        "[file]",
+        "[dir]",
+        "file",
+        "dir",
+        "[[str]]",
+        "[(str,str)]",
+        "(str,str)",
+        "(str,int)",
+        "(str,float)",
+        "(str,<one,two,three,four>)",
+        "(<one,two,three>,<one,two,three,four>)",
+        "[(<one,two,three>,<one,two,three,four>)]"
+    ])
+def test_value_has_value_init_none(type):
+    assert NodeValue(type).has_value is False
+
+
+@pytest.mark.parametrize(
+    "type,value", [
+        ("str", ""),
+        ("str", " "),
+        ("str", "12"),
+        ("str", "0"),
+        ("{str}", set(["", "test"])),
+        ("int", 0),
+        ("int", 1),
+        ("{int}", set([0])),
+        ("{int}", set([0, 1])),
+        ("float", 0),
+        ("float", -10),
+        ("float", 10),
+        ("{float}", set([0])),
+        ("{float}", set([0, 2])),
+        ("bool", True),
+        ("bool", False),
+        ("<one,two,three>", "one"),
+        ("<one,two,three>", "two"),
+        ("<one,two,three>", "three"),
+        ("{<one,two,three>}", set(["one"])),
+        ("{<one,two,three>}", set(["one", "two"])),
+        ("{<one,two,three>}", set(["one", "three"])),
+        ("[str]", ["str"]),
+        ("[str]", [""]),
+        ("[file]", ["test.v"]),
+        ("[dir]", ["."]),
+        ("file", "test.v"),
+        ("dir", "."),
+        ("[[str]]", [[""]]),
+        ("[(str,str)]", [("", "")]),
+        ("(str,str)", ("", "")),
+        ("(str,int)", ("", 0)),
+        ("(str,float)", ("str", 0)),
+        ("(str,<one,two,three,four>)", ("str", "two")),
+        ("(<one,two,three>,<one,two,three,four>)", ("two", "two")),
+        ("[(<one,two,three>,<one,two,three,four>)]", [("two", "two")])
+    ])
+def test_value_has_value_with_value(type, value):
+    node = NodeValue(type)
+    node.set(value)
+    assert node.has_value is True
+
+
 def test_value_fields():
     assert NodeValue("str").fields == (None, "value", "signature")
 
@@ -243,7 +328,7 @@ def test_directory_resolve_path_abspath():
     value.set(os.path.abspath("testdir"))
     os.makedirs("testdir", exist_ok=True)
 
-    assert value.resolve_path() == pathlib.PureWindowsPath(os.path.abspath("testdir")).as_posix()
+    assert value.resolve_path() == os.path.abspath("testdir")
 
 
 def test_file_init():
@@ -336,7 +421,7 @@ def test_file_resolve_path_abspath():
     with open("test.txt", "w") as f:
         f.write("test")
 
-    assert value.resolve_path() == pathlib.PureWindowsPath(os.path.abspath("test.txt")).as_posix()
+    assert value.resolve_path() == os.path.abspath("test.txt")
 
 
 def test_set_list():
@@ -364,6 +449,17 @@ def test_nodelist_str_getdict_empty():
     param = NodeListValue(NodeValue("str"))
 
     assert param.getdict() == {'signature': [], 'value': []}
+
+
+def test_nodelist_gettcl():
+    param = NodeListValue(NodeValue("str"))
+
+    param.set("test")
+    assert param.gettcl() == '[list "test"]'
+
+
+def test_nodelist_gettcl_empty():
+    assert NodeListValue(NodeValue("str")).gettcl() == '[list ]'
 
 
 def test_nodelist_file_getdict_empty():
@@ -853,3 +949,502 @@ def test_windows_path_imported_directory():
     check_file = value.resolve_path(collection_dir=os.path.abspath("collections"))
     assert check_file == os.path.abspath(import_path)
     assert os.path.isfile(check_file)
+
+
+def test_defvalue_file():
+    value = FileNodeValue(value="thisfile")
+    assert value.get() == "thisfile"
+
+
+def test_defvalue_file_getdict():
+    value = FileNodeValue(value="thisfile")
+    assert value.getdict() == {
+        'author': [],
+        'date': None,
+        'filehash': None,
+        'package': None,
+        'signature': None,
+        'value': 'thisfile'
+    }
+
+
+def test_defvalue_file_list():
+    value = NodeListValue(FileNodeValue(value="thisfile"))
+    assert value.get() == ["thisfile"]
+
+
+def test_defvalue_file_list_getdict():
+    value = NodeListValue(FileNodeValue(value="thisfile"))
+    assert value.getdict() == {
+        'author': [],
+        'date': [
+            None,
+        ],
+        'filehash': [
+            None,
+        ],
+        'package': [
+            None,
+        ],
+        'signature': [
+            None,
+        ],
+        'value': [
+            'thisfile',
+        ],
+    }
+
+
+def test_defvalue_file_package():
+    value = FileNodeValue(value="thisfile", package="thispackage")
+    assert value.get() == "thisfile"
+    assert value.get(field="package") == "thispackage"
+
+
+def test_defvalue_file_package_getdict():
+    value = FileNodeValue(value="thisfile", package="thispackage")
+    assert value.getdict() == {
+        'author': [],
+        'date': None,
+        'filehash': None,
+        'package': "thispackage",
+        'signature': None,
+        'value': 'thisfile',
+    }
+
+
+def test_defvalue_file_list_package():
+    value = NodeListValue(FileNodeValue(value="thisfile", package="thispackage"))
+    assert value.get() == ["thisfile"]
+    assert value.get(field="package") == ["thispackage"]
+
+
+def test_defvalue_file_list_package_getdict():
+    value = NodeListValue(FileNodeValue(value="thisfile", package="thispackage"))
+    assert value.getdict() == {
+        'author': [],
+        'date': [
+            None,
+        ],
+        'filehash': [
+            None,
+        ],
+        'package': [
+            'thispackage',
+        ],
+        'signature': [
+            None,
+        ],
+        'value': [
+            'thisfile',
+        ],
+    }
+
+
+def test_defvalue_dir_package():
+    value = DirectoryNodeValue(value="thisdir", package="thispackage")
+    assert value.get() == "thisdir"
+    assert value.get(field="package") == "thispackage"
+
+
+def test_defvalue_dir_list_package():
+    value = NodeListValue(DirectoryNodeValue(value="thisdir", package="thispackage"))
+    assert value.get() == ["thisdir"]
+    assert value.get(field="package") == ["thispackage"]
+
+
+def test_defvalue_dir_list_package_getdict():
+    value = NodeListValue(DirectoryNodeValue(value="thisdir", package="thispackage"))
+    assert value.getdict() == {
+        'filehash': [
+            None,
+        ],
+        'package': [
+            'thispackage',
+        ],
+        'signature': [
+            None,
+        ],
+        'value': [
+            'thisdir',
+        ],
+    }
+
+
+def test_set_set():
+    param = NodeSetValue(NodeValue("str"))
+
+    set_ret = param.set('test')
+    assert isinstance(set_ret, tuple)
+    assert len(set_ret) == 1
+    assert isinstance(set_ret[0], NodeValue)
+    assert set_ret[0].get() == 'test'
+
+
+def test_add_set():
+    param = NodeSetValue(NodeValue("str"))
+
+    param.set('test')
+    add_ret = param.add('test2')
+    assert isinstance(add_ret, tuple)
+    assert len(add_ret) == 1
+    assert isinstance(add_ret[0], NodeValue)
+    assert add_ret[0].get() == 'test2'
+
+
+def test_nodeset_str_getdict_empty():
+    param = NodeSetValue(NodeValue("str"))
+
+    assert param.getdict() == {'signature': [], 'value': []}
+
+
+def test_nodeset_file_getdict_empty():
+    param = NodeSetValue(FileNodeValue())
+
+    assert param.getdict() == {
+        'signature': [], 'value': [], 'author': [], 'date': [], 'filehash': [], 'package': []}
+
+
+def test_nodeset_file_getdict_author():
+    param = NodeSetValue(FileNodeValue())
+
+    param.set(["file0"])
+    param.set(["hash"], field='filehash')
+
+    assert param.getdict() == {
+        'signature': [None],
+        'value': ["file0"],
+        'author': [],
+        'date': [None],
+        'filehash': ["hash"],
+        'package': [None]}
+
+
+def test_nodeset_dir_getdict_empty():
+    param = NodeSetValue(DirectoryNodeValue())
+
+    assert param.getdict() == {'signature': [], 'value': [], 'filehash': [], 'package': []}
+
+
+def test_nodeset_type():
+    assert NodeSetValue(NodeValue("str")).type == set(["str"])
+    assert NodeSetValue(FileNodeValue()).type == set(["file"])
+    assert NodeSetValue(DirectoryNodeValue()).type == set(["dir"])
+
+
+def test_nodeset_fields():
+    assert NodeSetValue(NodeValue("str")).fields == (None, 'value', 'signature')
+    assert NodeSetValue(FileNodeValue()).fields == \
+        (None, 'value', 'signature', 'filehash', 'package', 'date', 'author')
+    assert NodeSetValue(DirectoryNodeValue()).fields == \
+        (None, 'value', 'signature', 'filehash', 'package')
+
+
+def test_nodeset_set_str_value():
+    param = NodeSetValue(NodeValue("str"))
+
+    param.set(["test1", "test2"])
+
+    assert param.getdict() == {
+        'signature': [None, None],
+        'value': ["test1", "test2"]}
+
+    param.set(["test0", "test4", "test1"])
+
+    assert param.getdict() == {
+        'signature': [None, None, None],
+        'value': ["test0", "test4", "test1"]}
+
+
+def test_nodeset_from_dict():
+    param = NodeSetValue(NodeValue("str"))
+    check_param = NodeSetValue(NodeValue("str"))
+
+    param.set(["test1", "test2"])
+
+    check_param._from_dict(param.getdict(), [], None)
+    assert param.getdict() == check_param.getdict()
+
+
+def test_nodeset_from_dict_incomplete_set():
+    param = NodeSetValue(NodeValue("str"))
+
+    param._from_dict({
+        'signature': [None, None],
+        'value': ["test1", "test2"]}, [], None)
+
+    assert param.getdict() == {
+        'signature': [None, None],
+        'value': ["test1", "test2"]}
+
+
+def test_nodeset_from_dict_ordering():
+    param = NodeSetValue(NodeValue("str"))
+
+    param._from_dict({
+        'signature': ["1234", "5678"],
+        'value': ["test1", "test2"]}, [], None)
+
+    assert param.getdict() == {
+        'signature': ["1234", "5678"],
+        'value': ["test1", "test2"]}
+
+
+def test_nodeset_set_str_signature():
+    param = NodeSetValue(NodeValue("str"))
+
+    param.set(["test1", "test2"])
+
+    assert param.getdict() == {
+        'signature': [None, None],
+        'value': ["test1", "test2"]}
+
+    param.set(["test3", "test4"], field='signature')
+
+    assert param.getdict() == {
+        'signature': ["test3", "test4"],
+        'value': ["test1", "test2"]}
+
+    with pytest.raises(ValueError, match="set on signature field must match number of value"):
+        param.set(["test3"], field='signature')
+
+
+def test_nodeset_add_str_value():
+    param = NodeSetValue(NodeValue("str"))
+
+    param.set(["test1", "test2"])
+
+    assert param.getdict() == {
+        'signature': [None, None],
+        'value': ["test1", "test2"]}
+
+    param.add(["test0", "test4", "test1"])
+
+    assert param.getdict() == {
+        'signature': [None, None, None, None],
+        'value': ["test1", "test2", "test0", "test4"]}
+
+
+def test_nodeset_add_str_non_value():
+    param = NodeSetValue(NodeValue("str"))
+
+    param.set(["test1", "test2"])
+
+    assert param.getdict() == {
+        'signature': [None, None],
+        'value': ["test1", "test2"]}
+
+    with pytest.raises(ValueError,
+                       match="cannot add to signature field"):
+        param.add(["test0", "test4", "test1"], field='signature')
+
+
+def test_nodeset_copy():
+    param = NodeSetValue(NodeValue("str"))
+
+    param.set(["test1", "test2"])
+
+    check_param = param.copy()
+
+    assert param is not check_param
+    assert param.getdict() == check_param.getdict()
+
+
+def test_nodeset_set_type():
+    value = NodeSetValue(NodeValue("str"))
+    value.set(["test"])
+    assert value.type == set(["str"])
+    assert value.values[0].type == "str"
+    value._set_type("[int]")
+    assert value.type == set(["int"])
+    assert value.values[0].type == "int"
+
+
+def test_nodeset_get_ordering():
+    value = NodeSetValue(NodeValue("str"))
+    value.set(["test0", "test1", "test1", "test3"])
+    assert value.get() == set(["test0", "test1", "test3"])
+    assert value.get(ordered=True) == ["test0", "test1", "test3"]
+
+
+def test_nodeset_set_reject_dups():
+    value = NodeSetValue(NodeValue("str"))
+    value.set(["test0", "test1", "test1", "test3"])
+    assert value.get() == set(["test0", "test1", "test3"])
+
+
+def test_nodeset_add_reject_dups():
+    value = NodeSetValue(NodeValue("str"))
+    value.add(["test0", "test1", "test1", "test3"])
+    assert value.get() == set(["test0", "test1", "test3"])
+    value.add(["test0", "test1", "test1", "test3", "test4"])
+    assert value.get() == set(["test0", "test1", "test3", "test4"])
+
+
+def test_nodeset_get_defvalue():
+    defvalue = NodeValue("str")
+    defvalue.set("this")
+    value = NodeSetValue(defvalue)
+    assert value.get() == set(["this"])
+    assert value.get(ordered=True) == ["this"]
+
+
+def test_nodeset_gettcl():
+    param = NodeSetValue(NodeValue("str"))
+
+    param.add("test0")
+    param.add("test1")
+    param.add("test0")
+    assert param.gettcl() == '[list "test0" "test1"]'
+
+
+def test_nodeset_gettcl_empty():
+    assert NodeSetValue(NodeValue("str")).gettcl() == '[list ]'
+
+
+@pytest.mark.parametrize(
+    "type", [
+        "str",
+        "{str}",
+        "int",
+        "{int}",
+        "float",
+        "{float}",
+        "bool",
+        "<one,two,three>",
+        "{<one,two,three>}",
+        "[str]",
+        "[file]",
+        "[dir]",
+        "file",
+        "dir",
+        "[[str]]",
+        "[(str,str)]",
+        "(str,str)",
+        "(str,int)",
+        "(str,float)",
+        "(str,<one,two,three,four>)",
+        "(<one,two,three>,<one,two,three,four>)",
+        "[(<one,two,three>,<one,two,three,four>)]"
+    ])
+def test_list_has_value_init_none(type):
+    assert NodeListValue(NodeValue(type)).has_value is False
+
+
+@pytest.mark.parametrize(
+    "type,value", [
+        ("str", ""),
+        ("str", " "),
+        ("str", "12"),
+        ("str", "0"),
+        ("{str}", set(["", "test"])),
+        ("int", 0),
+        ("int", 1),
+        ("{int}", set([0])),
+        ("{int}", set([0, 1])),
+        ("float", 0),
+        ("float", -10),
+        ("float", 10),
+        ("{float}", set([0])),
+        ("{float}", set([0, 2])),
+        ("bool", True),
+        ("bool", False),
+        ("<one,two,three>", "one"),
+        ("<one,two,three>", "two"),
+        ("<one,two,three>", "three"),
+        ("{<one,two,three>}", set(["one"])),
+        ("{<one,two,three>}", set(["one", "two"])),
+        ("{<one,two,three>}", set(["one", "three"])),
+        ("[str]", ["str"]),
+        ("[str]", [""]),
+        ("[file]", ["test.v"]),
+        ("[dir]", ["."]),
+        ("file", "test.v"),
+        ("dir", "."),
+        ("[[str]]", [[""]]),
+        ("[(str,str)]", [("", "")]),
+        ("(str,str)", ("", "")),
+        ("(str,int)", ("", 0)),
+        ("(str,float)", ("str", 0)),
+        ("(str,<one,two,three,four>)", ("str", "two")),
+        ("(<one,two,three>,<one,two,three,four>)", ("two", "two")),
+        ("[(<one,two,three>,<one,two,three,four>)]", [("two", "two")])
+    ])
+def test_list_has_value_with_value(type, value):
+    node = NodeListValue(NodeValue(type))
+    node.set(value)
+    assert node.has_value is True
+
+
+@pytest.mark.parametrize(
+    "type", [
+        "str",
+        "{str}",
+        "int",
+        "{int}",
+        "float",
+        "{float}",
+        "bool",
+        "<one,two,three>",
+        "{<one,two,three>}",
+        "[str]",
+        "[file]",
+        "[dir]",
+        "file",
+        "dir",
+        "[[str]]",
+        "[(str,str)]",
+        "(str,str)",
+        "(str,int)",
+        "(str,float)",
+        "(str,<one,two,three,four>)",
+        "(<one,two,three>,<one,two,three,four>)",
+        "[(<one,two,three>,<one,two,three,four>)]"
+    ])
+def test_set_has_value_init_none(type):
+    assert NodeSetValue(NodeValue(type)).has_value is False
+
+
+@pytest.mark.parametrize(
+    "type,value", [
+        ("str", ""),
+        ("str", " "),
+        ("str", "12"),
+        ("str", "0"),
+        ("{str}", set(["", "test"])),
+        ("int", 0),
+        ("int", 1),
+        ("{int}", set([0])),
+        ("{int}", set([0, 1])),
+        ("float", 0),
+        ("float", -10),
+        ("float", 10),
+        ("{float}", set([0])),
+        ("{float}", set([0, 2])),
+        ("bool", True),
+        ("bool", False),
+        ("<one,two,three>", "one"),
+        ("<one,two,three>", "two"),
+        ("<one,two,three>", "three"),
+        ("{<one,two,three>}", set(["one"])),
+        ("{<one,two,three>}", set(["one", "two"])),
+        ("{<one,two,three>}", set(["one", "three"])),
+        ("[str]", ["str"]),
+        ("[str]", [""]),
+        ("[file]", ["test.v"]),
+        ("[dir]", ["."]),
+        ("file", "test.v"),
+        ("dir", "."),
+        ("[[str]]", [[""]]),
+        ("[(str,str)]", [("", "")]),
+        ("(str,str)", ("", "")),
+        ("(str,int)", ("", 0)),
+        ("(str,float)", ("str", 0)),
+        ("(str,<one,two,three,four>)", ("str", "two")),
+        ("(<one,two,three>,<one,two,three,four>)", ("two", "two")),
+        ("[(<one,two,three>,<one,two,three,four>)]", [("two", "two")])
+    ])
+def test_set_has_value_with_value(type, value):
+    node = NodeSetValue(NodeValue(type))
+    node.set(value)
+    assert node.has_value is True

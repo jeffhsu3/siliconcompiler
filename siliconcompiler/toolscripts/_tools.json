@@ -1,7 +1,7 @@
 {
   "openroad": {
     "git-url": "https://github.com/The-OpenROAD-Project/OpenROAD.git",
-    "git-commit": "4b729ea474e9bd0a3513579b41a8c96fe20dc75e",
+    "git-commit": "6a23a4b44f9e8b7a8ca3d700bab0e9e87b2dcc57",
     "docker-cmds": [
       "# Remove OR-Tools files",
       "RUN rm -f $SC_PREFIX/Makefile $SC_PREFIX/README.md",
@@ -17,7 +17,7 @@
   },
   "opensta": {
     "git-url": "https://github.com/parallaxsw/OpenSTA.git",
-    "git-commit": "c2a0c4db30439b74ad30037d28c9c030e2fb34c3",
+    "git-commit": "255988633fe90820536b6542a6b608db4d9648bc",
     "auto-update": true
   },
   "netgen": {
@@ -55,12 +55,12 @@
   },
   "sv2v": {
     "git-url": "https://github.com/zachjs/sv2v.git",
-    "git-commit": "380c2b978a54e459ac216c9e6b7f1a4e31573a0e",
+    "git-commit": "80a2f0cf685f6d873b4ee37b76e6c18dc60e2555",
     "auto-update": true
   },
   "verilator": {
     "git-url": "https://github.com/verilator/verilator.git",
-    "git-commit": "v5.030",
+    "git-commit": "v5.038",
     "auto-update": true
   },
   "bambu": {
@@ -76,7 +76,7 @@
   },
   "vpr": {
     "git-url": "https://github.com/verilog-to-routing/vtr-verilog-to-routing.git",
-    "git-commit": "c606a21d9ab5db53fb382a7dd79a0703c887108c",
+    "git-commit": "4bb340af8243b95efdea493d4cb58aed1099151f",
     "auto-update": false
   },
   "icepack": {
@@ -101,7 +101,7 @@
   },
   "yosys": {
     "git-url": "https://github.com/YosysHQ/yosys.git",
-    "git-commit": "v0.54",
+    "git-commit": "v0.56",
     "version-prefix": "",
     "auto-update": true
   },
@@ -112,8 +112,7 @@
     "auto-update": true
   },
   "xdm": {
-    "git-url": "https://github.com/Xyce/XDM.git",
-    "git-commit": "Release-2.7.0",
+    "version": "2.7.0",
     "auto-update": false
   },
   "slurm": {
@@ -139,11 +138,6 @@
     "git-url": "https://github.com/chipsalliance/verible.git",
     "auto-update": false
   },
-  "slang": {
-    "git-commit": "v8.1",
-    "git-url": "https://github.com/MikePopoloski/slang.git",
-    "auto-update": true
-  },
   "gtkwave": {
     "git-commit": "v3.3.116",
     "git-url": "https://github.com/gtkwave/gtkwave.git",
@@ -151,7 +145,7 @@
   },
   "yosys-slang": {
     "git-url": "https://github.com/povik/yosys-slang.git",
-    "git-commit": "6ba28d997b89c179a10ed79be6547b97c9f143a8",
+    "git-commit": "fd77b320b865ee75560edab4258ced1e1dd47ecf",
     "docker-depends": "yosys",
     "auto-update": true
   },
@@ -161,13 +155,9 @@
     "docker-depends": "yosys",
     "auto-update": true
   },
-  "yosys-parmys": {
-    "git-url": "https://github.com/verilog-to-routing/vtr-verilog-to-routing.git",
-    "git-commit": "c606a21d9ab5db53fb382a7dd79a0703c887108c",
-    "docker-depends": [
-      "yosys",
-      "vpr"
-    ],
+  "surfer": {
+    "git-url": "https://gitlab.com/surfer-project/surfer.git",
+    "git-commit": "v0.3.0",
     "auto-update": false
   }
 }

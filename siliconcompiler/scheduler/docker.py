@@ -5,15 +5,33 @@ import sys
 
 from pathlib import Path
 
+import siliconcompiler
+
 from siliconcompiler.package import RemoteResolver
 from siliconcompiler.utils import default_email_credentials_file
-from siliconcompiler.scheduler.schedulernode import SchedulerNode
+from siliconcompiler.scheduler import SchedulerNode
+from siliconcompiler.utils.logging import SCBlankLoggerFormatter
 
 
-def get_image(chip, step, index):
+def get_image(project, step, index):
+    """Determines the Docker image to use for a given node.
+
+    The image is selected based on the following priority:
+    1. The value of ['option', 'scheduler', 'queue'] specific to the step/index.
+    2. The value of the 'SC_DOCKER_IMAGE' environment variable.
+    3. A default image name constructed as 'ghcr.io/siliconcompiler/sc_runner:v<version>'.
+
+    Args:
+        project (Chip): The Chip object.
+        step (str): The step name of the node.
+        index (str): The index of the node.
+
+    Returns:
+        str: The name of the Docker image to use.
+    """
     from siliconcompiler import __version__
 
-    queue = chip.get('option', 'scheduler', 'queue', step=step, index=index)
+    queue = project.get('option', 'scheduler', 'queue', step=step, index=index)
     if queue:
         return queue
 
@@ -22,21 +40,42 @@ def get_image(chip, step, index):
         f'ghcr.io/siliconcompiler/sc_runner:v{__version__}')
 
 
-def get_volumes_directories(chip, cache_dir, workdir, step, index):
+def get_volumes_directories(project, cache_dir, workdir, step, index):
+    """
+    Identifies and categorizes all host directories that need to be mounted
+    into the Docker container.
+
+    This function scans the project schema for all file and directory paths,
+    collects them, and then prunes the list to a minimal set of parent
+    directories to mount. It then separates these directories into read-write
+    (RW) and read-only (RO) sets.
+
+    Args:
+        project (Chip): The Chip object.
+        cache_dir (str): The path to the cache directory.
+        workdir (str): The path to the node's working directory.
+        step (str): The step name of the current node.
+        index (str): The index of the current node.
+
+    Returns:
+        tuple: A tuple containing two sets: (rw_volumes, ro_volumes).
+            `rw_volumes` is a set of Path objects for read-write directories.
+            `ro_volumes` is a set of Path objects for read-only directories.
+    """
     all_dirs = set()
     # Collect files
-    for key in chip.allkeys():
-        sc_type = chip.get(*key, field='type')
+    for key in project.allkeys():
+        sc_type = project.get(*key, field='type')
 
         if 'file' in sc_type or 'dir' in sc_type:
             cstep = step
             cindex = index
 
-            if chip.get(*key, field='pernode').is_never():
+            if project.get(*key, field='pernode').is_never():
                 cstep = None
                 cindex = None
 
-            files = chip.find_files(*key, step=cstep, index=cindex, missing_ok=True)
+            files = project.find_files(*key, step=cstep, index=cindex, missing_ok=True)
             if files:
                 if not isinstance(files, list):
                     files = [files]
@@ -49,13 +88,13 @@ def get_volumes_directories(chip, cache_dir, workdir, step, index):
                         all_dirs.add(path)
 
     # Collect caches
-    for resolver in chip.get('package', field="schema").get_resolvers().values():
-        all_dirs.add(resolver())
+    # for resolver in project.get('package', field="schema").get_resolvers().values():
+    #     all_dirs.add(resolver())
 
     all_dirs = [
         Path(cache_dir),
         Path(workdir),
-        Path(chip.scroot),
+        Path(siliconcompiler.__file__).parent,
         *[Path(path) for path in all_dirs]]
 
     pruned_dirs = all_dirs.copy()
@@ -74,7 +113,7 @@ def get_volumes_directories(chip, cache_dir, workdir, step, index):
 
     pruned_dirs = set(pruned_dirs)
 
-    builddir = chip.find_files('option', 'builddir')
+    builddir = project.find_files('option', 'builddir')
 
     rw_volumes = set()
 
@@ -89,29 +128,73 @@ def get_volumes_directories(chip, cache_dir, workdir, step, index):
 
 
 class DockerSchedulerNode(SchedulerNode):
-    def __init__(self, chip, step, index, replay=False):
-        super().__init__(chip, step, index, replay=replay)
+    """A SchedulerNode implementation for running tasks in a Docker container.
 
-        self.__queue = get_image(self.chip, self.step, self.index)
+    This class extends the base SchedulerNode to handle the specifics of
+    running a compilation step inside a Docker container. It uses the `docker-py`
+    library to manage the container lifecycle, including pulling the image,
+
+    mounting volumes, and executing the command.
+    """
+
+    def __init__(self, project, step, index, replay=False):
+        """Initializes a DockerSchedulerNode.
+
+        Args:
+            chprojectip (Project): The parent Project object.
+            step (str): The step name in the flowgraph.
+            index (str): The index for the step.
+            replay (bool): If True, sets up the node to replay a previous run.
+        """
+        super().__init__(project, step, index, replay=replay)
+
+        self.__queue = get_image(self.project, self.step, self.index)
 
     @property
     def queue(self):
+        """str: The Docker image name to be used for the container."""
         return self.__queue
 
     @staticmethod
-    def init(chip):
+    def init(project):
+        """
+        A static pre-processing hook for the Docker scheduler.
+
+        On Windows, this method forces all file/directory parameters to be
+        copied rather than linked, which avoids issues with differing
+        filesystem types between the host and the Linux-based container.
+        It then triggers `project.collect()` to ensure all files are staged.
+
+        Args:
+            project (Chip): The Chip object to perform pre-processing on.
+        """
         if sys.platform == 'win32':
             # this avoids the issue of different file system types
-            chip.logger.error('Setting copy field to true for docker run on Windows')
-            for key in chip.allkeys():
+            project.logger.error('Setting copy field to true for docker run on Windows')
+            for key in project.allkeys():
                 if key[0] == 'history':
                     continue
-                sc_type = chip.get(*key, field='type')
+                sc_type = project.get(*key, field='type')
                 if 'dir' in sc_type or 'file' in sc_type:
-                    chip.set(*key, True, field='copy')
-            chip.collect()
+                    project.set(*key, True, field='copy')
+            project.collect()
 
     def run(self):
+        """
+        Runs the node's task inside a Docker container.
+
+        This method orchestrates the entire process:
+        1. Connects to the Docker daemon.
+        2. Pulls the required Docker image if it's not present locally.
+        3. Determines and prepares all necessary volume mounts.
+        4. Creates and starts a detached Docker container.
+        5. Writes the current manifest to a file accessible by the container.
+        6. Executes the `sc-node` command inside the container.
+        7. Streams the container's log output to the console.
+        8. Halts on error and ensures the container is stopped upon completion.
+        """
+        self._init_run_logger()
+
         try:
             client = docker.from_env()
             client.version()
@@ -121,21 +204,14 @@ class DockerSchedulerNode(SchedulerNode):
 
         is_windows = sys.platform == 'win32'
 
-        workdir = self.chip.getworkdir()
+        workdir = self.project.getworkdir()
         start_cwd = os.getcwd()
-
-        # Remove handlers from logger
-        for handler in self.logger.handlers.copy():
-            self.logger.removeHandler(handler)
-
-        # Reinit logger
-        self.chip._init_logger(step=self.step, index=self.index, in_run=True)
 
         # Change working directory since the run may delete this folder
         os.makedirs(workdir, exist_ok=True)
         os.chdir(workdir)
 
-        image_name = get_image(self.chip, self.step, self.index)
+        image_name = get_image(self.project, self.step, self.index)
 
         # Pull image if needed
         try:
@@ -156,20 +232,19 @@ class DockerSchedulerNode(SchedulerNode):
         email_file = default_email_credentials_file()
         if is_windows:
             # Hack to get around manifest merging
-            self.chip.set('option', 'cachedir', None)
+            self.project.set('option', 'cachedir', None)
             cache_dir = '/sc_cache'
             cwd = '/sc_docker'
             builddir = f'{cwd}/build'
 
             local_cfg = os.path.join(start_cwd, 'sc_docker.json')
-            job = self.chip.get('option', 'jobname')
-            cfg = f'{builddir}/{self.chip.design}/{job}/{self.step}/{self.index}/sc_docker.json'
+            cfg = f'{builddir}/{self.name}/{self.jobname}/{self.step}/{self.index}/sc_docker.json'
 
             user = None
 
             volumes = [
-                f"{self.chip.cwd}:{cwd}:rw",
-                f"{RemoteResolver.determine_cache_dir(self.chip)}:{cache_dir}:rw"
+                f"{self.project.cwd}:{cwd}:rw",
+                f"{RemoteResolver.determine_cache_dir(self.project)}:{cache_dir}:rw"
             ]
             self.logger.debug(f'Volumes: {volumes}')
 
@@ -180,9 +255,9 @@ class DockerSchedulerNode(SchedulerNode):
 
                 volumes.append(f'{os.path.dirname(email_file)}:/sc_home/.sc:ro')
         else:
-            cache_dir = RemoteResolver.determine_cache_dir(self.chip)
-            cwd = self.chip.cwd
-            builddir = self.chip.find_files('option', 'builddir')
+            cache_dir = RemoteResolver.determine_cache_dir(self.project)
+            cwd = self.project.cwd
+            builddir = self.project.find_files('option', 'builddir')
 
             local_cfg = os.path.abspath('sc_docker.json')
             cfg = local_cfg
@@ -190,7 +265,7 @@ class DockerSchedulerNode(SchedulerNode):
             user = os.getuid()
 
             rw_volumes, ro_volumes = get_volumes_directories(
-                self.chip, cache_dir, workdir, self.step, self.index)
+                self.project, cache_dir, workdir, self.step, self.index)
             volumes = [
                 *[
                     f'{path}:{path}:rw' for path in rw_volumes
@@ -215,7 +290,7 @@ class DockerSchedulerNode(SchedulerNode):
                 volumes=volumes,
                 labels=[
                     "siliconcompiler",
-                    f"sc_node:{self.chip.design}:{self.step}{self.index}"
+                    f"sc_node:{self.name}:{self.step}:{self.index}"
                 ],
                 user=user,
                 detach=True,
@@ -224,12 +299,12 @@ class DockerSchedulerNode(SchedulerNode):
                 environment=env)
 
             # Write manifest to make it available to the docker runner
-            self.chip.write_manifest(local_cfg)
+            self.project.write_manifest(local_cfg)
 
             cachemap = []
-            for package, resolver in self.chip.get(
-                    'package', field="schema").get_resolvers().items():
-                cachemap.append(f'{package}:{resolver()}')
+            # for package, resolver in self.project.get(
+            #         'package', field="schema").get_resolvers().items():
+            #     cachemap.append(f'{package}:{resolver()}')
 
             self.logger.info('Running in docker container: '
                              f'{container.name} ({container.short_id})')
@@ -250,9 +325,14 @@ class DockerSchedulerNode(SchedulerNode):
             stream = client.api.exec_start(exec_handle, stream=True)
 
             # Print the log
-            for chunk in stream:
-                for line in chunk.decode().splitlines():
-                    print(line)
+            org_formatter = self.project._logger_console.formatter
+            try:
+                self.project._logger_console.setFormatter(SCBlankLoggerFormatter())
+                for chunk in stream:
+                    for line in chunk.decode().splitlines():
+                        self.logger.info(line)
+            finally:
+                self.project._logger_console.setFormatter(org_formatter)
 
             if client.api.exec_inspect(exec_handle['Id']).get('ExitCode') != 0:
                 self.halt()

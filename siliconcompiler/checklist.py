@@ -10,8 +10,18 @@ from siliconcompiler import NodeStatus, utils
 
 
 class ChecklistSchema(NamedSchema):
+    """
+    A class for managing design checklists and their verification.
+    """
     def __init__(self, name=None):
-        super().__init__(name=name)
+        """
+        Initializes the ChecklistSchema object.
+
+        Args:
+            name (str, optional): The name of the checklist standard. Defaults to None.
+        """
+        super().__init__()
+        self.set_name(name)
 
         schema_checklist(self)
 
@@ -56,7 +66,7 @@ class ChecklistSchema(NamedSchema):
         assert hasattr(schema_root, "history"), f"{schema_root}"
 
         if logger:
-            logger.info(f'Checking checklist {self.name()}')
+            logger.info(f'Checking checklist {self.name}')
 
         if items is None:
             items = self.getkeys()
@@ -71,7 +81,7 @@ class ChecklistSchema(NamedSchema):
         for item in items:
             if item not in self.getkeys():
                 if logger:
-                    logger.error(f'{item} is not a check in {self.name()}.')
+                    logger.error(f'{item} is not a check in {self.name}.')
                 error = True
                 continue
 
@@ -101,13 +111,13 @@ class ChecklistSchema(NamedSchema):
                     if (step, index) not in flow.get_nodes():
                         error = True
                         if logger:
-                            logger.error(f'{step}{index} not found in flowgraph for {job}')
+                            logger.error(f'{step}/{index} not found in flowgraph for {job}')
                         continue
 
                     if job_data.get('record', 'status', step=step, index=index) == \
                             NodeStatus.SKIPPED:
                         if logger:
-                            logger.warning(f'{step}{index} was skipped')
+                            logger.warning(f'{step}/{index} was skipped')
                         continue
 
                     has_check = True
@@ -134,7 +144,7 @@ class ChecklistSchema(NamedSchema):
                             number_format = '.3e'
 
                     value = job_data.get('metric', metric, step=step, index=index)
-                    criteria_ok = utils.safecompare(self, value, op, goal)
+                    criteria_ok = utils.safecompare(value, op, goal)
                     if metric in self.getkeys(item, 'waiver'):
                         waivers = self.get(item, 'waiver', metric)
                     else:
@@ -142,7 +152,7 @@ class ChecklistSchema(NamedSchema):
 
                     criteria_str = f'{metric}{op}{goal:{number_format}}'
                     compare_str = f'{value:{number_format}}{op}{goal:{number_format}}'
-                    step_desc = f'job {job} with step {step}{index} and task {tool}/{task}'
+                    step_desc = f'job {job} with step {step}/{index} and task {tool}/{task}'
                     if not criteria_ok and waivers:
                         if logger:
                             logger.warning(f'{item} criteria {criteria_str} ({compare_str}) unmet '
@@ -209,11 +219,25 @@ class ChecklistSchema(NamedSchema):
 
         return not error
 
+    @classmethod
+    def _getdict_type(cls) -> str:
+        """
+        Returns the meta data for getdict
+        """
+
+        return ChecklistSchema.__name__
+
 
 ############################################
 # Design Checklist
 ############################################
 def schema_checklist(schema):
+    """
+    Adds checklist schema parameters to the given schema.
+
+    Args:
+        schema (EditableSchema): The schema to modify.
+    """
     schema = EditableSchema(schema)
 
     item = 'default'

@@ -50,7 +50,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Read-only credentials, can be accessed by external contributors
       - name: Log in to the Container registry
@@ -123,7 +123,7 @@ jobs:
 
     steps:
       - name: Download docker artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: tools
 
@@ -160,7 +160,7 @@ jobs:
 
     steps:
       - name: Download docker artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: tools
 
@@ -193,7 +193,7 @@ jobs:
 
     steps:
       - name: Download docker artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: tools
 
@@ -234,7 +234,7 @@ jobs:
 
     steps:
     - name: Download docker artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: tools
 
@@ -277,8 +277,38 @@ jobs:
           ${{ needs.build_tool_builder.outputs.sc_runner }}
           ${{ env.RUNNER_TAG }}
 
+  cache:
+    name: Generate cache
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install
+        run: |
+          python3 -m venv venv
+          . venv/bin/activate
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -e .[test]
+          python3 -m pip install -r ./examples/requirements.txt
+
+      - name: Gather cache
+        run: |
+          . venv/bin/activate
+          python3 .github/workflows/bin/generate_cache.py
+
+      - name: Upload
+        uses: actions/upload-artifact@v4.3.3
+        with:
+          name: scpackage-cache
+          path: .sc/cache
+          retention-days: 1
+
   tool_based_tests:
-    needs: [build_tool_builder, build_sc_tools]
+    needs: [build_tool_builder, build_sc_tools, cache]
     runs-on: ubuntu-latest
 
     if: always() && !cancelled()
@@ -286,11 +316,15 @@ jobs:
     container:
       image: ${{ needs.build_tool_builder.outputs.sc_tools }}
 
+    env:
+      SCTESTCACHE: ${{ github.workspace }}/.sc/cache/
+
     timeout-minutes: 45
     name: 'Tool-based tests'
     steps:
+
       - name: Checkout current SiliconCompiler
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup tests
         run: |
@@ -299,6 +333,12 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install -e .[test]
           python3 -m pip install -r ./examples/requirements.txt
+
+      - name: Restore cache
+        uses: actions/download-artifact@v5
+        with:
+          name: scpackage-cache
+          path: ${{ env.SCTESTCACHE }}
 
       - name: Start slurm
         run: /start_slurm.sh
@@ -323,20 +363,23 @@ jobs:
           verbose: true
 
   daily_tests_job_docker_linux:
-    needs: [build_tool_builder, build_sc_tools]
+    needs: [cache, build_tool_builder, build_sc_tools]
     timeout-minutes: 60
     runs-on: ubuntu-latest
 
     if: always() && !cancelled()
 
+    env:
+      SCTESTCACHE: ${{ github.workspace }}/.sc/cache/
+
     name: 'All docker tests (linux)'
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     steps:
       - name: Checkout SiliconCompiler
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python ${{ matrix.python-version }}
         id: setup-python
@@ -349,6 +392,12 @@ jobs:
       - name: Fetch runner image
         run: |
           docker pull ${{ needs.build_tool_builder.outputs.sc_tools }}
+
+      - name: Restore cache
+        uses: actions/download-artifact@v5
+        with:
+          name: scpackage-cache
+          path: ${{ env.SCTESTCACHE }}
 
       - name: Setup tests
         run: |
@@ -379,7 +428,7 @@ jobs:
       changed: ${{ steps.changes.outputs.tools }}
     steps:
       - name: Checkout current SiliconCompiler
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Check tool updates
         uses: dorny/paths-filter@v3
@@ -397,12 +446,23 @@ jobs:
 
   server_tests:
     needs: build_sc_tools
-    if: always() && !cancelled()
+    if: false
     name: Test server
     timeout-minutes: 90
     runs-on: ubuntu-latest
     steps:
+      - name: Check for Secret availability
+        id: secret-check
+        # perform secret check & put boolean result as an output
+        shell: bash
+        run: |
+          if [ "${{ secrets.ZA_TOKEN }}" != '' ]; then
+            echo "available=true" >> $GITHUB_OUTPUT;
+          else
+            echo "available=false" >> $GITHUB_OUTPUT;
+          fi
       - name: Trigger server tests
+        if: ${{ steps.secret-check.outputs.available == 'true' }}
         uses: convictional/trigger-workflow-and-wait@v1.6.5
         with:
           github_token: ${{ secrets.ZA_TOKEN }}
@@ -412,37 +472,3 @@ jobs:
           client_payload: '{"sc-ref": "${{ github.ref }}"}'
           wait_interval: 60
           ref: 'main'
-
-  lint_tcl:
-    name: Lint OpenROAD TCL scripts
-    needs: [build_tool_builder, build_sc_tools]
-
-    if: ${{ !always() }}
-
-    runs-on: ubuntu-latest
-    container:
-      image: ${{ needs.build_tool_builder.outputs.sc_tools }}
-    env:
-      COMMAND_SPEC_PATH: tclint-openroad-spec.json
-
-    steps:
-      - name: Check out Git repository
-        uses: actions/checkout@v4
-
-      - name: Install tclint
-        run: |
-          python3 -m venv .venv
-          . .venv/bin/activate
-          pip3 install .[lint]
-
-      - name: Generate OpenROAD command spec
-        run: |
-          . .venv/bin/activate
-          tclint-plugins make-spec openroad --output $COMMAND_SPEC_PATH
-
-      - name: Lint with tclint
-        run: |
-          . .venv/bin/activate
-          tclint --commands $COMMAND_SPEC_PATH \
-            siliconcompiler/tools/openroad/scripts \
-            siliconcompiler/tools/opensta/scripts

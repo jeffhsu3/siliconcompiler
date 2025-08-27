@@ -1,6 +1,8 @@
 import copy
 import json
 
+from typing import Tuple, Set, Dict, List
+
 
 class Journal:
     """
@@ -12,7 +14,7 @@ class Journal:
         keyprefix (list of str): keypath to prefix on to recorded path
     """
 
-    def __init__(self, keyprefix=None):
+    def __init__(self, keyprefix: Tuple[str] = None):
         if not keyprefix:
             self.__keyprefix = tuple()
         else:
@@ -24,14 +26,14 @@ class Journal:
         self.stop()
 
     @property
-    def keypath(self):
+    def keypath(self) -> Tuple[str]:
         '''
         Returns the reference key path for this journal
         '''
 
         return self.__keyprefix
 
-    def get_child(self, *keypath):
+    def get_child(self, *keypath: Tuple[str]):
         '''
         Get a child journal based on a new keypath
 
@@ -43,7 +45,7 @@ class Journal:
         child.__parent = self.__parent
         return child
 
-    def from_dict(self, manifest):
+    def from_dict(self, manifest: Dict):
         '''
         Import a journal from a manifest dictionary
 
@@ -53,33 +55,33 @@ class Journal:
 
         self.__journal = manifest
 
-    def get(self):
+    def get(self) -> List[Dict]:
         """
         Returns a copy of the current journal
         """
 
         return copy.deepcopy(self.__parent.__journal)
 
-    def has_journaling(self):
+    def has_journaling(self) -> bool:
         """
         Returns true if the schema is currently setup and is the root of the journal and has data
         """
         return self is self.__parent and bool(self.__journal)
 
-    def is_journaling(self):
+    def is_journaling(self) -> bool:
         """
         Returns true if the schema is currently setup for journaling
         """
         return self.__parent.__journal is not None
 
-    def get_types(self):
+    def get_types(self) -> Set[str]:
         """
         Returns the current schema accesses that are being recorded
         """
 
         return self.__parent.__record_types.copy()
 
-    def add_type(self, value):
+    def add_type(self, value: str) -> None:
         """
         Adds a new access type to the journal record.
 
@@ -90,9 +92,9 @@ class Journal:
         if value not in ("set", "add", "remove", "unset", "get"):
             raise ValueError(f"{value} is not a valid type")
 
-        return self.__parent.__record_types.add(value)
+        self.__parent.__record_types.add(value)
 
-    def remove_type(self, value):
+    def remove_type(self, value: str) -> None:
         """
         Removes a new access type to the journal record.
 
@@ -105,7 +107,13 @@ class Journal:
         except KeyError:
             pass
 
-    def record(self, record_type, key, value=None, field=None, step=None, index=None):
+    def record(self,
+               record_type: str,
+               key: Tuple[str],
+               value=None,
+               field: str = None,
+               step: str = None,
+               index: str = None) -> None:
         '''
         Record the schema transaction
         '''
@@ -116,6 +124,9 @@ class Journal:
         if record_type not in self.__parent.__record_types:
             return
 
+        if isinstance(value, set):
+            value = list(value)
+
         self.__parent.__journal.append({
             "type": record_type,
             "key": tuple([*self.__keyprefix, *key]),
@@ -125,7 +136,7 @@ class Journal:
             "index": index
         })
 
-    def start(self):
+    def start(self) -> None:
         '''
         Start journaling the schema transactions
         '''
@@ -135,7 +146,7 @@ class Journal:
         self.add_type("remove")
         self.add_type("unset")
 
-    def stop(self):
+    def stop(self) -> None:
         '''
         Stop journaling the schema transactions
         '''
@@ -143,7 +154,7 @@ class Journal:
         self.__parent.__record_types.clear()
 
     @staticmethod
-    def replay_file(schema, filepath):
+    def replay_file(schema, filepath: str) -> None:
         '''
         Replay a journal into a schema from a manifest
 
@@ -160,7 +171,7 @@ class Journal:
         journal.from_dict(data["__journal__"])
         journal.replay(schema)
 
-    def replay(self, schema):
+    def replay(self, schema) -> None:
         '''
         Replay journal into a schema
 
@@ -196,7 +207,7 @@ class Journal:
                 raise ValueError(f'Unknown record type {record_type}')
 
     @staticmethod
-    def access(schema):
+    def access(schema) -> "Journal":
         '''
         Access a journal from a schema
 

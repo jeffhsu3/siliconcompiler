@@ -1,93 +1,218 @@
-import os
+from typing import Union, Dict, List
 
-import os.path
-
-from siliconcompiler.schema import BaseSchema
+from siliconcompiler.pathschema import PathSchema
 from siliconcompiler.schema import EditableSchema, Parameter, Scope
 from siliconcompiler.schema.utils import trim
-from siliconcompiler.package import Resolver
 
 
-class PackageSchema(BaseSchema):
+class PackageSchema(PathSchema):
+    """
+    A class for managing package-related schema data.
+    """
     def __init__(self):
+        """
+        Initializes a PackageSchema object.
+        """
         super().__init__()
 
         schema_package(self)
 
-        self.__cache = {}
-
-    def register(self, name, path, ref=None, clobber=True):
+    def set_description(self, desc: str):
         """
-        Registers a package by its name with the source path and reference
-
-        Registered package sources are stored in the package section of the schema.
+        Set the description of the package.
 
         Args:
-            name (str): Package name
-            path (str): Path to the sources, can be file, git url, archive url
-            ref (str): Reference of the sources, can be commitid, branch name, tag
-            clobber (bool): Overwrite existing
+            desc (str): The description string.
+        """
+        return self.set("package", "description", trim(desc))
 
-        Examples:
-            >>> schema.register('siliconcompiler_data',
-                    'git+https://github.com/siliconcompiler/siliconcompiler',
-                    'cd328131bafd361787f9137a6ffed999d64c8c30')
+    def get_description(self) -> str:
+        """
+        Get the description of the package.
+
+        Returns:
+            str: The description string.
         """
 
-        # If this is a file, get the directory for this
-        if os.path.isfile(path):
-            path = os.path.dirname(os.path.abspath(path))
-        elif os.path.isdir(path):
-            path = os.path.abspath(path)
+        return self.get("package", "description")
 
-        success = False
-        if self.set('source', name, 'path', path, clobber=clobber):
-            success = True
-        if success and ref:
-            success = False
-            if self.set('source', name, 'ref', ref, clobber=clobber):
-                success = True
-        return success
-
-    def get_resolver(self, package):
-        '''
-        Returns a specific resolver
+    def set_version(self, version: str):
+        """
+        Set the version of the package.
 
         Args:
-            package (str): name of package
-        '''
-        resolver_cls = Resolver.find_resolver(self.get("source", package, "path"))
-        resolver = resolver_cls(package, self._parent(root=True),
-                                self.get("source", package, "path"),
-                                self.get("source", package, "ref"))
-        resolver.set_cache(self.__cache)
-        return resolver
+            version (str): The version string.
+        """
+        return self.set("package", "version", version)
 
-    def get_resolvers(self):
-        '''
-        Returns a dictionary of packages with their resolver method.
-        '''
-        resolvers = {}
-        for package in self.getkeys("source"):
-            resolvers[package] = self.get_resolver(package).get_path
+    def get_version(self) -> str:
+        """
+        Get the version of the package.
 
-        return resolvers
+        Returns:
+            str: The version string.
+        """
+        return self.get("package", "version")
 
-    def _set_cache(self, package, path):
-        self.__cache[package] = path
+    def set_vendor(self, vendor: str):
+        """
+        Set the vendor of the package.
 
-    def get_path_cache(self):
-        return self.__cache.copy()
+        Args:
+            vendor (str): The vendor name.
+        """
+        return self.set("package", "vendor", vendor)
+
+    def get_vendor(self) -> str:
+        """
+        Get the vendor of the package.
+
+        Returns:
+            str: The vendor name.
+        """
+        return self.get("package", "vendor")
+
+    def add_license(self, name: str):
+        """
+        Add a license name to the package.
+
+        Args:
+            name (str): The name of the license.
+        """
+        return self.add("package", "license", name)
+
+    def add_licensefile(self, file: str, dataroot: str = None):
+        """
+        Add a license file to the package.
+
+        Args:
+            file (str): The path to the license file.
+            dataroot (str, optional): The data reference for the package. Defaults to None,
+                                    which uses the active package.
+        """
+        if not dataroot:
+            dataroot = self._get_active("package")
+        with self.active_dataroot(dataroot):
+            return self.add("package", "licensefile", file)
+
+    def get_license(self) -> List[str]:
+        """
+        Get a list of license names associated with the package.
+
+        Returns:
+            List[str]: A list of license names.
+        """
+        return self.get("package", "license")
+
+    def get_licensefile(self) -> List[str]:
+        """
+        Get a list of license file paths associated with the package.
+
+        Returns:
+            List[str]: A list of file paths.
+        """
+        return self.find_files("package", "licensefile")
+
+    def add_author(self,
+                   identifier: str,
+                   name: str = None,
+                   email: str = None,
+                   organization: str = None):
+        """
+        Add or update author information for the package.
+
+        Args:
+            identifier (str): A unique identifier for the author.
+            name (str, optional): The author's name. Defaults to None.
+            email (str, optional): The author's email address. Defaults to None.
+            organization (str, optional): The author's organization. Defaults to None.
+        """
+        params = []
+        if name:
+            params.append(self.set("package", "author", identifier, "name", name))
+        if email:
+            params.append(self.set("package", "author", identifier, "email", email))
+        if organization:
+            params.append(self.set("package", "author", identifier, "organization", organization))
+        return [p for p in params if p]
+
+    def get_author(self, identifier: str = None):
+        """
+        Returns the author information for a specific author or all authors.
+
+        Args:
+            identifier (str): A unique identifier for the author, if None returns all
+        """
+        if identifier is None:
+            authors = []
+            for author in self.getkeys("package", "author"):
+                authors.append(self.get_author(author))
+            return authors
+        return {
+            "name": self.get("package", "author", identifier, "name"),
+            "email": self.get("package", "author", identifier, "email"),
+            "organization": self.get("package", "author", identifier, "organization")
+        }
+
+    def add_doc(self, type: str, path: str, dataroot: str = None):
+        """
+        Add documentation to the package.
+
+        Args:
+            type (str): The type of documentation (e.g., "manual", "api").
+            path (str): The path to the documentation file.
+            dataroot (str, optional): The data reference for the package. Defaults to None,
+                                    which uses the active package.
+
+        Returns:
+            The result of the `add` operation.
+        """
+        if not dataroot:
+            dataroot = self._get_active("package")
+        with self.active_dataroot(dataroot):
+            return self.add("package", "doc", type, path)
+
+    def get_doc(self, type: str = None) -> Union[List[str], Dict[str, List[str]]]:
+        """
+        Get documentation files for the package.
+
+        Args:
+            type (str, optional): The type of documentation to retrieve. If None,
+                                returns all documentation organized by type. Defaults to None.
+        """
+        if type:
+            return self.find_files("package", "doc", type)
+
+        docs = {}
+        for type in self.getkeys("package", "doc"):
+            doc_files = self.find_files("package", "doc", type)
+            if doc_files:
+                docs[type] = doc_files
+        return docs
+
+    @classmethod
+    def _getdict_type(cls) -> str:
+        """
+        Returns the meta data for getdict
+        """
+
+        return PackageSchema.__name__
 
 
 ############################################
 # Package information
 ############################################
 def schema_package(schema):
+    """
+    Adds package schema parameters to the given schema.
+
+    Args:
+        schema (EditableSchema): The schema to modify.
+    """
     schema = EditableSchema(schema)
 
     schema.insert(
-        'version',
+        'package', 'version',
         Parameter(
             'str',
             scope=Scope.GLOBAL,
@@ -100,7 +225,19 @@ def schema_package(schema):
             or a semver compatible version.""")))
 
     schema.insert(
-        'description',
+        'package', 'vendor',
+        Parameter(
+            'str',
+            scope=Scope.GLOBAL,
+            shorthelp="Package: vendor",
+            switch="-package_vendor <str>",
+            example=[
+                "cli: -package_vendor acme",
+                "api: chip.set('package', 'vendor', 'acme')"],
+            help=trim("""Package vendor.""")))
+
+    schema.insert(
+        'package', 'description',
         Parameter(
             'str',
             scope=Scope.GLOBAL,
@@ -112,45 +249,17 @@ def schema_package(schema):
             help=trim("""Package short one line description for package
             managers and summary reports.""")))
 
-    schema.insert(
-        'keyword',
-        Parameter(
-            'str',
-            scope=Scope.GLOBAL,
-            shorthelp="Package: keyword",
-            switch="-package_keyword <str>",
-            example=[
-                "cli: -package_keyword cpu",
-                "api: chip.set('package', 'keyword', 'cpu')"],
-            help=trim("""Package keyword(s) used to characterize package.""")))
-    schema.insert(
-        'doc', 'homepage',
-        Parameter(
-            'str',
-            scope=Scope.GLOBAL,
-            shorthelp="Package: documentation homepage",
-            switch="-package_doc_homepage <str>",
-            example=[
-                "cli: -package_doc_homepage index.html",
-                "api: chip.set('package', 'doc', 'homepage', 'index.html')"],
-            help=trim("""
-            Package documentation homepage. Filepath to design docs homepage.
-            Complex designs can can include a long non standard list of
-            documents dependent. A single html entry point can be used to
-            present an organized documentation dashboard to the designer.""")))
-
-    doctypes = ['datasheet',
-                'reference',
-                'userguide',
-                'quickstart',
-                'releasenotes',
-                'testplan',
-                'signoff',
-                'tutorial']
-
-    for item in doctypes:
+    for item in [
+            'datasheet',
+            'reference',
+            'userguide',
+            'quickstart',
+            'releasenotes',
+            'testplan',
+            'signoff',
+            'tutorial']:
         schema.insert(
-            'doc', item,
+            'package', 'doc', item,
             Parameter(
                 '[file]',
                 scope=Scope.GLOBAL,
@@ -162,7 +271,7 @@ def schema_package(schema):
                 help=trim(f"""Package list of {item} documents.""")))
 
     schema.insert(
-        'license',
+        'package', 'license',
         Parameter(
             '[str]',
             scope=Scope.GLOBAL,
@@ -174,7 +283,7 @@ def schema_package(schema):
             help=trim("""Package list of SPDX license identifiers.""")))
 
     schema.insert(
-        'licensefile',
+        'package', 'licensefile',
         Parameter(
             '[file]',
             scope=Scope.GLOBAL,
@@ -187,29 +296,12 @@ def schema_package(schema):
             applied in cases when a SPDX identifier is not available.
             (eg. proprietary licenses).""")))
 
-    schema.insert(
-        'organization',
-        Parameter(
-            '[str]',
-            scope=Scope.GLOBAL,
-            shorthelp="Package: sponsoring organization",
-            switch="-package_organization <str>",
-            example=[
-                "cli: -package_organization 'humanity'",
-                "api: chip.set('package', 'organization', 'humanity')"],
-            help=trim("""Package sponsoring organization. The field can be left
-            blank if not applicable.""")))
-
-    record = ['name',
-              'email',
-              'username',
-              'location',
-              'organization',
-              'publickey']
-
-    for item in record:
+    for item in [
+            'name',
+            'email',
+            'organization']:
         schema.insert(
-            'author', 'default', item,
+            'package', 'author', 'default', item,
             Parameter(
                 'str',
                 scope=Scope.GLOBAL,
@@ -220,41 +312,3 @@ def schema_package(schema):
                     f"api: chip.set('package', 'author', 'wiley', '{item}', 'wiley@acme.com')"],
                 help=trim(f"""Package author {item} provided with full name as key and
                 {item} as value.""")))
-
-    schema.insert(
-        'source', 'default', 'path',
-        Parameter(
-            'str',
-            scope=Scope.GLOBAL,
-            shorthelp="Package: data source path",
-            switch="-package_source_path 'source <str>'",
-            example=[
-                "cli: -package_source_path "
-                "'freepdk45_data ssh://git@github.com/siliconcompiler/freepdk45/'",
-                "api: chip.set('package', 'source', "
-                "'freepdk45_data', 'path', 'ssh://git@github.com/siliconcompiler/freepdk45/')"],
-            help=trim("""
-            Package data source path, allowed paths:
-
-            * /path/on/network/drive
-            * file:///path/on/network/drive
-            * git+https://github.com/xyz/xyz
-            * git://github.com/xyz/xyz
-            * git+ssh://github.com/xyz/xyz
-            * ssh://github.com/xyz/xyz
-            * https://github.com/xyz/xyz/archive
-            * https://zeroasic.com/xyz.tar.gz
-            * python://siliconcompiler
-            """)))
-
-    schema.insert(
-        'source', 'default', 'ref',
-        Parameter(
-            'str',
-            scope=Scope.GLOBAL,
-            shorthelp="Package: data source reference",
-            switch="-package_source_ref 'source <str>'",
-            example=[
-                "cli: -package_source_ref 'freepdk45_data 07ec4aa'",
-                "api: chip.set('package', 'source', 'freepdk45_data', 'ref', '07ec4aa')"],
-            help=trim("""Package data source reference""")))

@@ -1,6 +1,7 @@
-+incdir+data
+// This is a comment
++incdir+.
+// Ingoree empty file below
+   
 +define+ASIC
-data/heartbeat.v
-data/increment.v
-+define+VERILATOR
-data/tb.v
+heartbeat.v
+increment.v

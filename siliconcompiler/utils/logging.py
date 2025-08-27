@@ -1,11 +1,25 @@
 import logging
+import re
 import sys
+
 from siliconcompiler import utils
 
 
 class SCBlankLoggerFormatter(logging.Formatter):
     def __init__(self):
         super().__init__("%(message)s")
+
+
+class SCBlankColorlessLoggerFormatter(logging.Formatter):
+    def __init__(self):
+        super().__init__("%(message)s")
+
+        self.__rm = re.compile(u"\u001b\\[(\\d+)m")
+
+    def format(self, record):
+        msg = super().format(record)
+
+        return self.__rm.sub("", msg)
 
 
 class SCDebugLoggerFormatter(logging.Formatter):
@@ -43,7 +57,7 @@ class SCInRunLoggerFormatter(logging.Formatter):
 
         flow = chip.get('option', 'flow')
         if flow:
-            nodes_to_run = list(chip.schema.get("flowgraph", flow, field="schema").get_nodes())
+            nodes_to_run = list(chip.get("flowgraph", flow, field="schema").get_nodes())
         else:
             nodes_to_run = []
 
@@ -108,14 +122,40 @@ class SCColorLoggerFormatter(logging.Formatter):
         return log_fmt.format(record)
 
     @staticmethod
-    def supports_color(handler):
-        if type(handler) is not logging.StreamHandler:
-            return False
-
+    def supports_color(stream):
         supported_platform = sys.platform != 'win32'
         try:
-            is_a_tty = hasattr(handler.stream, 'isatty') and handler.stream.isatty()
+            is_a_tty = hasattr(stream, 'isatty') and stream.isatty()
         except:  # noqa E722
             is_a_tty = False
 
         return supported_platform and is_a_tty
+
+
+def get_console_formatter(chip, in_run, step, index):
+    loglevel = chip.get('option', 'loglevel',
+                        step=step, index=index)
+
+    if loglevel == 'quiet':
+        base_format = SCBlankLoggerFormatter()
+    elif in_run:
+        if loglevel == 'debug':
+            base_format = SCDebugInRunLoggerFormatter(
+                chip,
+                chip.get('option', 'jobname'),
+                step, index)
+        else:
+            base_format = SCInRunLoggerFormatter(
+                chip,
+                chip.get('option', 'jobname'),
+                step, index)
+    else:
+        if loglevel == 'debug':
+            base_format = SCDebugLoggerFormatter()
+        else:
+            base_format = SCLoggerFormatter()
+
+    support_color = SCColorLoggerFormatter.supports_color(sys.stdout)
+    if support_color:
+        return SCColorLoggerFormatter(base_format)
+    return base_format

@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+"""
+A command-line utility to execute a single node (step and index) from a
+SiliconCompiler flowgraph.
+
+This script is designed to be called by a scheduler (like Slurm, Docker, or
+a local process manager) to run a specific task in isolation. It takes all
+necessary configuration information via command-line arguments, sets up a
+Chip object, and executes the specified node's `run()` method.
+"""
 
 import argparse
 import os
@@ -6,28 +15,27 @@ import sys
 import tarfile
 import os.path
 
-from siliconcompiler import Chip, Schema
-from siliconcompiler.scheduler.schedulernode import SchedulerNode
+from siliconcompiler import Project
+from siliconcompiler.package import Resolver
+from siliconcompiler.scheduler import SchedulerNode
 from siliconcompiler import __version__
 
 
 ##########################
 def main():
-    schema = Schema()
-
     # Can't use chip.cmdline because we don't want a bunch of extra logger information
     parser = argparse.ArgumentParser(prog='run_node',
                                      formatter_class=argparse.RawDescriptionHelpFormatter,
                                      description='Script to run a single node in an SC flowgraph')
 
+    # Define command-line arguments
     parser.add_argument('-version',
                         action='version',
                         version=__version__)
     parser.add_argument('-cfg',
                         required=True,
                         metavar='<file>',
-                        help=schema.get('option', 'cfg',
-                                        field='shorthelp'))
+                        help="Option: configuration manifest")
     parser.add_argument('-cwd',
                         required=True,
                         metavar='<directory>',
@@ -35,12 +43,10 @@ def main():
     parser.add_argument('-builddir',
                         metavar='<directory>',
                         required=True,
-                        help=schema.get('option', 'builddir',
-                                        field='shorthelp'))
+                        help="Option: build directory")
     parser.add_argument('-cachedir',
                         metavar='<directory>',
-                        help=schema.get('option', 'cachedir',
-                                        field='shorthelp'))
+                        help="Option: user cache directory")
     parser.add_argument('-cachemap',
                         metavar='<package>:<directory>',
                         nargs='+',
@@ -48,17 +54,14 @@ def main():
     parser.add_argument('-step',
                         required=True,
                         metavar='<step>',
-                        help=schema.get('arg', 'step',
-                                        field='shorthelp'))
+                        help="ARG: step argument")
     parser.add_argument('-index',
                         required=True,
                         metavar='<index>',
-                        help=schema.get('arg', 'index',
-                                        field='shorthelp'))
+                        help="ARG: index argument")
     parser.add_argument('-remoteid',
                         metavar='<id>',
-                        help=schema.get('record', 'remoteid',
-                                        field='shorthelp'))
+                        help="Record: remote job ID")
     parser.add_argument('-archive',
                         metavar='<file>',
                         help='Generate archive')
@@ -74,65 +77,61 @@ def main():
                         help='Running as replay')
     args = parser.parse_args()
 
-    # Change to working directory to allow rel path to be build dir
-    # this avoids needing to deal with the job hash on the client
-    # side
+    # Change to the specified working directory. This is crucial for remote
+    # runners (like Docker) where paths inside the environment are different
+    # from the host.
     os.chdir(os.path.abspath(args.cwd))
 
     # Create the Chip object.
-    chip = Chip('<design>')
-    chip.read_manifest(args.cfg)
+    proj = Project.from_manifest(filepath=args.cfg)
 
-    # setup work directory
-    chip.set('arg', 'step', args.step)
-    chip.set('arg', 'index', args.index)
-    chip.set('option', 'builddir', os.path.abspath(args.builddir))
+    # Configure the chip object based on command-line arguments.
+    proj.set('arg', 'step', args.step)
+    proj.set('arg', 'index', args.index)
+    proj.set('option', 'builddir', os.path.abspath(args.builddir))
 
     if args.cachedir:
-        chip.set('option', 'cachedir', os.path.abspath(args.cachedir))
+        proj.set('option', 'cachedir', os.path.abspath(args.cachedir))
 
     if args.remoteid:
-        chip.set('record', 'remoteid', args.remoteid)
+        proj.set('record', 'remoteid', args.remoteid)
 
+    # If running in a container/remote machine, we unset the scheduler to
+    # prevent a recursive scheduling loop.
     if args.unset_scheduler:
-        for vals, step, index in chip.schema.get('option', 'scheduler', 'name',
-                                                 field=None).getvalues():
-            chip.unset('option', 'scheduler', 'name', step=step, index=index)
+        for _, step, index in proj.get('option', 'scheduler', 'name',
+                                       field=None).getvalues():
+            proj.unset('option', 'scheduler', 'name', step=step, index=index)
 
-    # Init logger to ensure consistent view
-    chip._init_logger(step=args.step,
-                      index=args.index,
-                      in_run=True)
-
+    # Pre-populate the package cache if a map is provided.
     if args.cachemap:
         for cachepair in args.cachemap:
             package, path = cachepair.split(':')
-            chip.get("package", field="schema")._set_cache(package, path)
+            Resolver.set_cache(proj, package, path)
 
-    # Populate cache
-    for resolver in chip.get('package', field='schema').get_resolvers().values():
-        resolver()
+    # Ensure all package caches are populated before running the node.
+    # for resolver in chip.get('package', field='schema').get_resolvers().values():
+    #     resolver()
 
-    # Run the task.
+    # Instantiate the SchedulerNode for the specified step and index.
     error = True
+    node = SchedulerNode(
+        proj,
+        args.step,
+        args.index,
+        replay=args.replay)
     try:
-        SchedulerNode(chip,
-                      args.step,
-                      args.index,
-                      replay=args.replay).run()
+        # Execute the node's run() method.
+        node.run()
         error = False
-
     finally:
+        # Archive results upon completion, regardless of success or failure.
         if args.archive:
-            # Archive the results.
             with tarfile.open(args.archive,
                               mode='w:gz') as tf:
-                chip._archive_node(tf,
-                                   step=args.step,
-                                   index=args.index,
-                                   include=args.include)
+                node.archive(tf, include=args.include)
 
-    # Return success/fail flag, in case the caller is interested.
+    # Return a non-zero exit code on error.
     if error:
         return 1
     return 0
@@ -140,4 +139,5 @@ def main():
 
 ##########################
 if __name__ == "__main__":
+    # This makes the script executable.
     sys.exit(main())

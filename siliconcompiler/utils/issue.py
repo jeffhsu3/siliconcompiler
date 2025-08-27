@@ -6,10 +6,13 @@ import sys
 import tarfile
 import time
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from siliconcompiler.utils import get_file_template
 from siliconcompiler.tools._common import get_tool_task
 from siliconcompiler import RecordSchema
+from siliconcompiler.scheduler import SchedulerNode
+from siliconcompiler.schema import SCHEMA_VERSION
+from siliconcompiler import __version__ as SC_VERSION
 
 
 def generate_testcase(chip,
@@ -24,7 +27,7 @@ def generate_testcase(chip,
                       hash_files=False,
                       verbose_collect=True):
     # Save original schema since it will be modified
-    schema_copy = chip.schema.copy()
+    chip = chip.copy()
 
     issue_dir = tempfile.TemporaryDirectory(prefix='sc_issue_')
 
@@ -41,7 +44,7 @@ def generate_testcase(chip,
             sc_type = chip.get(*key, field='type')
             if 'file' not in sc_type and 'dir' not in sc_type:
                 continue
-            for _, key_step, key_index in chip.schema.get(*key, field=None).getvalues():
+            for _, key_step, key_index in chip.get(*key, field=None).getvalues():
                 chip.hash_files(*key,
                                 check=False,
                                 allow_cache=True,
@@ -129,15 +132,15 @@ def generate_testcase(chip,
 
     # Temporarily change current directory to appear to be issue_dir
     original_cwd = chip.cwd
-    chip.cwd = issue_dir.name
+    chip._Project__cwd = issue_dir.name
 
     # Get new directories
     job_dir = chip.getworkdir()
     new_work_dir = chip.getworkdir(step=step, index=index)
-    collection_dir = chip._getcollectdir()
+    collection_dir = chip.getcollectiondir()
 
     # Restore current directory
-    chip.cwd = original_cwd
+    chip._Project__cwd = original_cwd
 
     # Copy in issue run files
     shutil.copytree(work_dir, new_work_dir, dirs_exist_ok=True)
@@ -145,44 +148,38 @@ def generate_testcase(chip,
     chip.collect(directory=collection_dir, verbose=verbose_collect)
 
     # Set relative path to generate runnable files
-    chip._relative_path = new_work_dir
-    chip.cwd = issue_dir.name
+    chip._Project__cwd = issue_dir.name
 
     current_work_dir = os.getcwd()
     os.chdir(new_work_dir)
 
     flow = chip.get('option', 'flow')
 
-    task_class = chip.get("tool", tool, field="schema")
+    task_class = chip.get("tool", tool, "task", task, field="schema")
 
-    task_class.set_runtime(chip, step=step, index=index)
+    with task_class.runtime(SchedulerNode(chip, step, index), relpath=new_work_dir) as task:
+        # Rewrite replay.sh
+        prev_quiet = chip.get('option', 'quiet', step=step, index=index)
+        chip.set('option', 'quiet', True, step=step, index=index)
+        try:
+            # Rerun pre_process
+            task.pre_process()
+        except Exception:
+            pass
+        chip.set('option', 'quiet', prev_quiet, step=step, index=index)
 
-    # Rewrite replay.sh
-    prev_quiet = chip.get('option', 'quiet', step=step, index=index)
-    chip.set('option', 'quiet', True, step=step, index=index)
-    try:
-        # Rerun pre_process
-        task_class.pre_process()
-    except Exception:
-        pass
-    chip.set('option', 'quiet', prev_quiet, step=step, index=index)
+        is_python_tool = task.get_exe() is None
+        if not is_python_tool:
+            task.generate_replay_script(
+                f'{chip.getworkdir(step=step, index=index)}/replay.sh',
+                '.',
+                include_path=False)
 
-    is_python_tool = task_class.get_exe() is None
-
-    if not is_python_tool:
-        task_class.generate_replay_script(
-            f'{chip.getworkdir(step=step, index=index)}/replay.sh',
-            '.',
-            include_path=False)
-
-    # Rewrite tool manifest
-    task_class.write_task_manifest('.')
-
-    # Restore normal path behavior
-    chip._relative_path = None
+        # Rewrite tool manifest
+        task.write_task_manifest('.')
 
     # Restore current directory
-    chip.cwd = original_cwd
+    chip._Project__cwd = original_cwd
     os.chdir(current_work_dir)
 
     git_data = {}
@@ -211,7 +208,7 @@ def generate_testcase(chip,
 
     tool, task = get_tool_task(chip, step=step, index=index)
 
-    issue_time = time.time()
+    issue_time = datetime.now(timezone.utc).timestamp()
     issue_information = {}
     issue_information['environment'] = {key: value for key, value in os.environ.items()}
     issue_information['python'] = {"path": sys.path,
@@ -226,15 +223,15 @@ def generate_testcase(chip,
                                 'toolversion': chip.get('record', 'toolversion',
                                                         step=step, index=index),
                                 'task': task}
-    issue_information['version'] = {'schema': chip.schemaversion,
-                                    'sc': chip.scversion,
+    issue_information['version'] = {'schema': SCHEMA_VERSION,
+                                    'sc': SC_VERSION,
                                     'git': git_data}
 
     if not archive_name:
-        design = chip.design
+        design = chip.design.name
         job = chip.get('option', 'jobname')
-        file_time = datetime.fromtimestamp(issue_time).strftime('%Y%m%d-%H%M%S')
-        archive_name = f'sc_issue_{design}_{job}_{step}{index}_{file_time}.tar.gz'
+        file_time = datetime.fromtimestamp(issue_time, timezone.utc).strftime('%Y%m%d-%H%M%S')
+        archive_name = f'sc_issue_{design}_{job}_{step}_{index}_{file_time}.tar.gz'
 
     # Make support files
     issue_path = os.path.join(issue_dir.name, 'issue.json')
@@ -254,7 +251,7 @@ def generate_testcase(chip,
         with open(run_path, 'w') as f:
             replay_dir = os.path.relpath(chip.getworkdir(step=step, index=index),
                                          chip.cwd)
-            issue_title = f'{chip.design} for {step}{index} using {tool}/{task}'
+            issue_title = f'{chip.design} for {step}/{index} using {tool}/{task}'
             f.write(get_file_template('issue/run.sh').render(
                 title=issue_title,
                 exec_dir=replay_dir
@@ -288,8 +285,5 @@ def generate_testcase(chip,
 
     issue_dir.cleanup()
 
-    chip.logger.info(f'Generated testcase for {step}{index} in: '
+    chip.logger.info(f'Generated testcase for {step}/{index} in: '
                      f'{full_archive_path}')
-
-    # Restore original schema
-    chip.schema = schema_copy

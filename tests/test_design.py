@@ -1,12 +1,16 @@
-import re
-import os.path
-from pathlib import Path
 import pytest
-from siliconcompiler.design import DesignSchema
+import re
+import shutil
+
+import os.path
+
+from pathlib import Path
+
+from siliconcompiler import DesignSchema
+from siliconcompiler.schema import BaseSchema
 
 
 def test_design_keys():
-
     golden_keys = set([
         ('deps',),
         ('fileset', 'default', 'file', 'default'),
@@ -17,179 +21,462 @@ def test_design_keys():
         ('fileset', 'default', 'define'),
         ('fileset', 'default', 'undefine'),
         ('fileset', 'default', 'param', 'default'),
-        ('package', 'default', 'root'),
-        ('package', 'default', 'tag'),
+        ('fileset', 'default', 'depfileset'),
+        ('dataroot', 'default', 'path'),
+        ('dataroot', 'default', 'tag'),
+        ('package', 'author', 'default', 'email'),
+        ('package', 'author', 'default', 'name'),
+        ('package', 'author', 'default', 'organization'),
+        ('package', 'description'),
+        ('package', 'doc', 'datasheet'),
+        ('package', 'doc', 'quickstart'),
+        ('package', 'doc', 'reference'),
+        ('package', 'doc', 'releasenotes'),
+        ('package', 'doc', 'signoff'),
+        ('package', 'doc', 'testplan'),
+        ('package', 'doc', 'tutorial'),
+        ('package', 'doc', 'userguide'),
+        ('package', 'license'),
+        ('package', 'licensefile'),
+        ('package', 'vendor'),
+        ('package', 'version')
     ])
 
     assert set(DesignSchema("test").allkeys()) == golden_keys
 
 
-def test_design_values():
+@pytest.mark.parametrize("arg,value", [
+    (("topmodule",), "mytop"),
+    (("file", "verilog"), ['one.v', 'two.v']),
+    (("idir",), ['/home/acme/incdir1', '/home/acme/incdir2']),
+    (("libdir",), ['/usr/lib']),
+    (("lib",), ['lib1', 'lib2']),
+    (("define",), ['CFG_TARGET=FPGA']),
+    (("undefine",), ['CFG_TARGET']),
+    (("param", "N"), "64"),
+])
+def test_design_values(arg, value):
+    design = DesignSchema("test")
+
+    assert design.set("fileset", "rtl", *arg, value)
+    assert design.get("fileset", "rtl", *arg) == value
+
+
+def test_options_topmodule():
     d = DesignSchema("test")
 
-    # top module
-    top = 'mytop'
-    assert d.set('fileset', 'rtl', 'topmodule', top)
-    assert d.get('fileset', 'rtl', 'topmodule') == top
+    assert d.set_topmodule('mytop', 'rtl')
+    assert d.get_topmodule('rtl') == 'mytop'
 
-    # files
-    files = ['one.v', 'two.v']
-    assert d.set('fileset', 'rtl', 'file', 'verilog', files)
-    assert d.get('fileset', 'rtl', 'file', 'verilog') == files
 
-    # idir
-    idirs = ['/home/acme/incdir1', '/home/acme/incdir2']
-    assert d.set('fileset', 'rtl', 'idir', idirs)
-    assert d.get('fileset', 'rtl', 'idir', ) == idirs
+def test_options_topmodule_with_fileset():
+    d = DesignSchema("test")
 
-    # libdirs
-    libdirs = ['/usr/lib']
-    assert d.set('fileset', 'hls', 'libdir', libdirs)
-    assert d.get('fileset', 'hls', 'libdir', ) == libdirs
+    with d.active_fileset("rtl"):
+        assert d.set_topmodule('mytop')
+        assert d.get_topmodule() == 'mytop'
+    assert d.get_topmodule('rtl') == 'mytop'
 
-    # libs
-    libs = ['lib1', 'lib2']
-    assert d.set('fileset', 'rtl', 'lib', libs)
-    assert d.get('fileset', 'rtl', 'lib', ) == libs
 
-    # define
-    defs = ['CFG_TARGET=FPGA']
-    assert d.set('fileset', 'rtl', 'define', defs)
-    assert d.get('fileset', 'rtl', 'define') == defs
+def test_options_topmodule_fileset_error():
+    d = DesignSchema("test")
 
-    # undefine
-    undefs = ['CFG_TARGET']
-    assert d.set('fileset', 'rtl', 'undefine', undefs)
-    assert d.get('fileset', 'rtl', 'undefine') == undefs
+    with pytest.raises(ValueError, match="fileset key must be a string"):
+        d.set_topmodule('mytop', 2.3)
+    with pytest.raises(ValueError, match="fileset key must be a string"):
+        d.get_topmodule(2.3)
 
-    # param
-    val = '2'
-    assert d.set('fileset', 'rtl', 'param', 'N', val)
-    assert d.get('fileset', 'rtl', 'param', 'N') == val
+
+def test_options_topmodule_value_error():
+    d = DesignSchema("test")
+
+    with pytest.raises(ValueError, match="value must be of type string"):
+        d.set_topmodule(4, "rtl")
+
+
+def test_options_topmodule_with_none():
+    with pytest.raises(ValueError, match="value must be of type string"):
+        DesignSchema("test").set_topmodule(None, 'rtl')
+
+
+@pytest.mark.parametrize("name", [
+    "0abc", "abc$", ""
+])
+def test_options_topmodule_invalid_name(name):
+    with pytest.raises(ValueError, match=re.escape(f"{name} is not a legal topmodule string")):
+        DesignSchema("test").set_topmodule(name, "rtl")
+
+
+def test_options_idir():
+    d = DesignSchema("test")
+
+    os.makedirs("incdir1", exist_ok=True)
+    os.makedirs("incdir2", exist_ok=True)
+
+    for item in ["incdir1", "incdir2"]:
+        assert d.add_idir(item, 'rtl')
+    assert d.get_idir('rtl') == [os.path.abspath("incdir1"), os.path.abspath("incdir2")]
+
+
+def test_options_idir_with_fileset():
+    d = DesignSchema("test")
+
+    os.makedirs("incdir1", exist_ok=True)
+    os.makedirs("incdir2", exist_ok=True)
+
+    with d.active_fileset("rtl"):
+        for item in ["incdir1", "incdir2"]:
+            assert d.add_idir(item)
+        assert d.get_idir() == [os.path.abspath("incdir1"), os.path.abspath("incdir2")]
+    assert d.get_idir('rtl') == [os.path.abspath("incdir1"), os.path.abspath("incdir2")]
+
+
+def test_options_idir_with_none():
+    with pytest.raises(ValueError, match="value must be of type string"):
+        DesignSchema("test").add_idir(None, 'rtl')
+
+
+def test_options_idir_fileset_error():
+    d = DesignSchema("test")
+
+    with pytest.raises(ValueError, match="fileset key must be a string"):
+        d.add_idir('mytop', 2.3)
+    with pytest.raises(ValueError, match="fileset key must be a string"):
+        d.get_idir(2.3)
+
+
+def test_options_idir_value_error():
+    d = DesignSchema("test")
+
+    with pytest.raises(ValueError, match="value must be of type string"):
+        d.add_idir(4, "rtl")
+
+
+def test_options_libdir():
+    d = DesignSchema("test")
+
+    os.makedirs("lib1", exist_ok=True)
+    os.makedirs("lib2", exist_ok=True)
+
+    for item in ["lib1", "lib2"]:
+        assert d.add_libdir(item, 'rtl')
+    assert d.get_libdir('rtl') == [os.path.abspath("lib1"), os.path.abspath("lib2")]
+
+
+def test_options_libdir_with_none():
+    with pytest.raises(ValueError, match="value must be of type string"):
+        DesignSchema("test").add_libdir(None, 'rtl')
+
+
+def test_options_libdir_with_fileset():
+    d = DesignSchema("test")
+
+    os.makedirs("lib1", exist_ok=True)
+    os.makedirs("lib2", exist_ok=True)
+
+    with d.active_fileset("rtl"):
+        for item in ["lib1", "lib2"]:
+            assert d.add_libdir(item)
+        assert d.get_libdir() == [os.path.abspath("lib1"), os.path.abspath("lib2")]
+    assert d.get_libdir('rtl') == [os.path.abspath("lib1"), os.path.abspath("lib2")]
+
+
+def test_options_lib():
+    d = DesignSchema("test")
+
+    for item in ['lib1', 'lib2']:
+        assert d.add_lib(item, 'rtl')
+    assert d.get_lib('rtl') == ['lib1', 'lib2']
+
+
+def test_options_lib_with_none():
+    with pytest.raises(ValueError, match="value must be of type string"):
+        DesignSchema("test").add_lib(None, 'rtl')
+
+
+def test_options_lib_with_fileset():
+    d = DesignSchema("test")
+
+    with d.active_fileset("rtl"):
+        for item in ['lib1', 'lib2']:
+            assert d.add_lib(item)
+        assert d.get_lib() == ['lib1', 'lib2']
+    assert d.get_lib('rtl') == ['lib1', 'lib2']
+
+
+def test_options_define():
+    d = DesignSchema("test")
+
+    for item in ['CFG_TARGET=FPGA', 'VERILATOR']:
+        assert d.add_define(item, 'rtl')
+    assert d.get_define('rtl') == ['CFG_TARGET=FPGA', 'VERILATOR']
+
+
+def test_options_define_with_none():
+    with pytest.raises(ValueError, match="value must be of type string"):
+        DesignSchema("test").add_define(None, 'rtl')
+
+
+def test_options_define_with_fileset():
+    d = DesignSchema("test")
+
+    with d.active_fileset("rtl"):
+        for item in ['CFG_TARGET=FPGA', 'VERILATOR']:
+            assert d.add_define(item)
+        assert d.get_define() == ['CFG_TARGET=FPGA', 'VERILATOR']
+    assert d.get_define('rtl') == ['CFG_TARGET=FPGA', 'VERILATOR']
+
+
+def test_options_undefine():
+    d = DesignSchema("test")
+
+    for item in ['CFG_TARGET', 'CFG_SIM']:
+        assert d.add_undefine(item, 'rtl')
+    assert d.get_undefine('rtl') == ['CFG_TARGET', 'CFG_SIM']
+
+
+def test_options_undefine_with_none():
+    with pytest.raises(ValueError, match="value must be of type string"):
+        DesignSchema("test").add_undefine(None, 'rtl')
+
+
+def test_options_undefine_with_fileset():
+    d = DesignSchema("test")
+
+    with d.active_fileset("rtl"):
+        for item in ['CFG_TARGET', 'CFG_SIM']:
+            assert d.add_undefine(item)
+        assert d.get_undefine() == ['CFG_TARGET', 'CFG_SIM']
+    assert d.get_undefine('rtl') == ['CFG_TARGET', 'CFG_SIM']
+
+
+def test_options_param():
+    d = DesignSchema("test")
+
+    assert d.set_param('N', '2', 'rtl')
+    assert d.get_param('N', 'rtl') == '2'
+
+
+def test_options_set_param_error_fileset():
+    with pytest.raises(ValueError, match="fileset key must be a string"):
+        DesignSchema("test").set_param('N', '2', 123)
+
+
+def test_options_set_param_error_param():
+    with pytest.raises(ValueError, match="param value must be a string"):
+        DesignSchema("test").set_param("N", 2, "rtl")
+
+
+def test_options_get_param_error_fileset():
+    with pytest.raises(ValueError, match="fileset key must be a string"):
+        DesignSchema("test").get_param('N', 123)
+
+
+def test_options_param_with_fileset():
+    d = DesignSchema("test")
+
+    with d.active_fileset("rtl"):
+        assert d.set_param('N', '2')
+        assert d.get_param('N') == '2'
+    assert d.get_param('N', 'rtl') == '2'
+
+
+def test_options_depfileset():
+    d = DesignSchema("test")
+    obj0 = DesignSchema("obj0")
+    obj0.set_topmodule("test", "rtl")
+    obj0.set_topmodule("test", "rtl.tech")
+    obj0.set_topmodule("test", "testbench.this")
+    d.add_dep(obj0)
+
+    assert d.add_depfileset("obj0", "rtl", "rtl")
+    assert d.add_depfileset("obj0", "rtl.tech", "rtl")
+    assert d.add_depfileset("obj0", "testbench.this", "testbench")
+
+    assert d.get_depfileset("rtl") == [
+        ('obj0', 'rtl'),
+        ('obj0', 'rtl.tech')]
+    assert d.get_depfileset("testbench") == [('obj0', 'testbench.this')]
+
+
+def test_options_depfileset_with_object():
+    dep = DesignSchema("thisdep")
+    dep.set_topmodule("test", "rtl")
+
+    d = DesignSchema("test")
+    assert d.add_depfileset(dep, "rtl", "rtl")
+    assert d.get_dep("thisdep") is dep
+    assert d.get("fileset", "rtl", "depfileset") == [("thisdep", "rtl")]
+
+
+def test_options_depfileset_with_invalid_input():
+    with pytest.raises(TypeError, match="dep is not a valid type"):
+        DesignSchema("test").add_depfileset(1, "rtl", "rtl")
+
+
+def test_options_depfileset_with_fileset():
+    d = DesignSchema("test")
+    obj0 = DesignSchema("obj0")
+    obj0.set_topmodule("test", "rtl")
+    obj0.set_topmodule("test", "rtl.tech")
+    obj0.set_topmodule("test", "testbench.this")
+    d.add_dep(obj0)
+
+    with d.active_fileset("rtl"):
+        assert d.add_depfileset("obj0", "rtl")
+        assert d.add_depfileset("obj0", "rtl.tech")
+        assert d.get_depfileset() == [
+            ('obj0', 'rtl'),
+            ('obj0', 'rtl.tech')]
+    with d.active_fileset("testbench"):
+        assert d.add_depfileset("obj0", "testbench.this")
+        assert d.get_depfileset() == [('obj0', 'testbench.this')]
+
+    assert d.get_depfileset("rtl") == [
+        ('obj0', 'rtl'),
+        ('obj0', 'rtl.tech')]
+    assert d.get_depfileset("testbench") == [('obj0', 'testbench.this')]
+
+
+def test_options_add_depfileset_invalid_fileset():
+    d = DesignSchema("test")
+
+    with pytest.raises(ValueError, match="fileset key must be a string"):
+        d.add_depfileset("obj0", "rtl", fileset=1)
+
+
+def test_options_get_depfileset_invalid_fileset():
+    d = DesignSchema("test")
+
+    with pytest.raises(ValueError, match="fileset key must be a string"):
+        d.get_depfileset(fileset=1)
+
+
+def test_add_file_single():
+    d = DesignSchema("test")
+
+    assert d.add_file('one.v', 'rtl', filetype='verilog')
+    assert d.add_file('two.v', 'rtl', filetype='verilog')
+    assert d.get('fileset', 'rtl', 'file', 'verilog') == ['one.v', 'two.v']
+
+
+def test_add_file_none():
+    d = DesignSchema("test")
+
+    with pytest.raises(ValueError, match="add_file cannot process None"):
+        d.add_file(None, "rtl")
+
+
+def test_add_file_clobber():
+    d = DesignSchema("test")
+
+    assert d.add_file('one.v', 'rtl', filetype='verilog')
+    assert d.get('fileset', 'rtl', 'file', 'verilog') == ['one.v']
+    assert d.add_file('two.v', 'rtl', filetype='verilog', clobber=True)
+    assert d.get('fileset', 'rtl', 'file', 'verilog') == ['two.v']
 
 
 def test_add_file():
     d = DesignSchema("test")
 
-    # explicit file add
-    fileset = 'rtl'
-    files = ['one.v', 'two.v']
-    d.add_file(files, fileset, filetype='verilog')
-    assert d.get('fileset', fileset, 'file', 'verilog') == files
-
-    # filetype mapping
-    fileset = 'testbench'
-    files = ['tb.v', 'dut.v']
-    d.add_file(files, fileset)
-    assert d.get('fileset', 'testbench', 'file', 'verilog') == files
+    assert d.add_file(['one.v', 'two.v'], 'rtl', filetype='verilog')
+    assert d.get('fileset', 'rtl', 'file', 'verilog') == ['one.v', 'two.v']
 
 
-def test_get_file():
+def test_add_file_with_fileset():
     d = DesignSchema("test")
+
+    with d.active_fileset("rtl"):
+        assert d.add_file(['one.v', 'two.v'], filetype='verilog')
+    assert d.get('fileset', 'rtl', 'file', 'verilog') == ['one.v', 'two.v']
+
+
+def test_add_file_with_filetype():
+    d = DesignSchema("test")
+
+    assert d.add_file(['tb.v', 'dut.v'], 'testbench')
+    assert d.get('fileset', 'testbench', 'file', 'verilog') == ['tb.v', 'dut.v']
+
+
+def test_add_file_invalid_filetype():
+    d = DesignSchema("test")
+
+    with pytest.raises(ValueError, match="Unrecognized file extension: ver"):
+        d.add_file('tb.ver', 'testbench')
+
+
+def test_add_file_invalid_fileset():
+    d = DesignSchema("test")
+
+    with pytest.raises(ValueError, match="fileset key must be a string"):
+        d.add_file('tb.ver', 3)
+
+
+def test_get_file_multiple_filesets():
+    d = DesignSchema("test")
+
+    Path("one.v").touch()
+    Path("tb.v").touch()
+    Path("one.vhdl").touch()
 
     d.add_file(['one.v'], 'rtl', filetype='verilog')
     d.add_file(['tb.v'], 'testbench')
     d.add_file(['one.vhdl'], 'rtl')
 
-    # get all files
-    assert d.get_file(fileset=['rtl', 'testbench']) == (['one.v'] +
-                                                        ['one.vhdl'] +
-                                                        ['tb.v'])
-    # get rtl only
-    assert d.get_file(fileset='rtl') == ['one.v'] + ['one.vhdl']
+    assert d.get_file(fileset=['rtl', 'testbench']) == [
+        os.path.abspath('one.v'),
+        os.path.abspath('one.vhdl'),
+        os.path.abspath('tb.v')
+    ]
+
+
+def test_get_file_one_fileset():
+    d = DesignSchema("test")
+
+    Path("one.v").touch()
+    Path("one.vhdl").touch()
+
+    d.add_file(['one.v'], 'rtl', filetype='verilog')
+    d.add_file(['tb.v'], 'testbench')
+    d.add_file(['one.vhdl'], 'rtl')
+
+    assert d.get_file(fileset='rtl') == [
+        os.path.abspath('one.v'),
+        os.path.abspath('one.vhdl')
+    ]
+
+
+def test_get_file_filetype():
+    d = DesignSchema("test")
+
+    Path("one.v").touch()
+
+    d.add_file(['one.v'], 'rtl', filetype='verilog')
+    d.add_file(['tb.v'], 'testbench')
+    d.add_file(['one.vhdl'], 'rtl')
 
     # get verilog rtl only
-    assert d.get_file(fileset='rtl', filetype='verilog') == ['one.v']
+    assert d.get_file(fileset='rtl', filetype='verilog') == [os.path.abspath('one.v')]
 
 
-def test_options():
-
+def test_get_file_filetype_vhdl():
     d = DesignSchema("test")
 
-    # create fileset context
-    fileset = 'rtl'
+    Path("one.vhdl").touch()
 
-    # top module
-    top = 'mytop'
-    d.set_topmodule(top, fileset)
-    assert d.get_topmodule(fileset) == top
+    d.add_file(['one.v'], 'rtl', filetype='verilog')
+    d.add_file(['tb.v'], 'testbench')
+    d.add_file(['one.vhdl'], 'rtl')
 
-    # idir
-    idirs = ['/home/acme/incdir1', '/home/acme/incdir2']
-    for item in idirs:
-        d.add_idir(item, fileset)
-    assert d.get_idir(fileset) == idirs
-
-    # libdirs
-    libdirs = ['/usr/lib1', '/usr/lib2']
-    for item in libdirs:
-        d.add_libdir(item, fileset)
-    assert d.get_libdir(fileset) == libdirs
-
-    # libs
-    libs = ['lib1', 'lib2']
-    for item in libs:
-        d.add_lib(item, fileset)
-    assert d.get_lib(fileset) == libs
-
-    # define
-    defs = ['CFG_TARGET=FPGA', 'VERILATOR']
-    for item in defs:
-        d.add_define(item, fileset)
-    assert d.get_define(fileset) == defs
-
-    # undefine
-    undefs = ['CFG_TARGET', 'CFG_SIM']
-    for item in undefs:
-        d.add_undefine(item, fileset)
-    assert d.get_undefine(fileset) == undefs
+    # get verilog rtl only
+    assert d.get_file(fileset=['rtl', 'testbench'], filetype='vhdl') == [
+        os.path.abspath('one.vhdl')
+    ]
 
 
-def test_errors():
-
-    d = DesignSchema("test")
-
-    fileset = 'rtl'
-
-    # check invalid fileset types
-    dummy = 'mytop'
-    for item in [None, [], (0, 1), 1.1]:
-        with pytest.raises(ValueError, match="fileset key must be a string"):
-            d.set_topmodule(dummy, item)
-        with pytest.raises(ValueError, match="fileset key must be a string"):
-            d.get_topmodule(item)
-
-    # checking general types
-    for value in [None, (0, 1), 1.1]:
-        with pytest.raises(ValueError, match="value must be of type string"):
-            d.add_libdir(value, fileset)
-        with pytest.raises(ValueError, match="value must be of type string"):
-            d.set_topmodule(value, fileset)
-
-    # check valid topmodule strings
-    for value in ["0abc", "abc$", ""]:
-        with pytest.raises(ValueError, match=re.escape(f"{value} is not a legal topmodule string")):
-            d.set_topmodule(value, fileset)
-
-    # check valid filename
-    with pytest.raises(ValueError, match="add_file cannot process None"):
-        d.add_file(None, fileset)
-
-    # check valid extension
-    with pytest.raises(ValueError, match="illegal file extension"):
-        d.add_file("tmp.badex", fileset)
-
-
-def test_param():
-
-    d = DesignSchema("test")
-
-    name = 'N'
-    val = '2'
-    fileset = 'rtl'
-
-    d.set_param(name, val, fileset)
-    assert d.get_param(name, fileset) == val
+def test_get_file_one_invalid_fileset():
+    with pytest.raises(ValueError, match="fileset key must be a string"):
+        DesignSchema("test").get_file(fileset=4)
 
 
 def test_add_dep():
@@ -198,15 +485,37 @@ def test_add_dep():
     lib = DesignSchema('mylib')
     lib.add_file('mylib.v', fileset)
 
+    Path("mylib.v").touch()
+
     d = DesignSchema("test")
     d.add_dep(lib)
     lib = d.get_dep('mylib')
-    assert lib.get_file(fileset) == ['mylib.v']
+    assert lib.get_file(fileset) == [os.path.abspath('mylib.v')]
+
+
+def test_write_fileset_no_filepath():
+    with pytest.raises(ValueError, match="filename cannot be None"):
+        DesignSchema("test").write_fileset(None)
+
+
+def test_write_fileset_invalid_fileset():
+    with pytest.raises(ValueError, match="fileset key must be a string"):
+        DesignSchema("test").write_fileset("test.f", fileset=[None])
+
+
+def test_write_fileset_invalid_filetype():
+    with pytest.raises(ValueError, match="Unable to determine filetype of: test.invalid"):
+        DesignSchema("test").write_fileset("test.invalid", fileset="rtl")
+
+
+def test_write_fileset_invalid_fileformat():
+    with pytest.raises(ValueError, match="invalid is not a supported filetype"):
+        DesignSchema("test").write_fileset("test.f", fileset="rtl", fileformat="invalid")
 
 
 def test_write_fileset(datadir):
-
     d = DesignSchema("test")
+    d.cwd = os.path.dirname(datadir)
 
     fileset = 'rtl'
     d.add_file(['data/heartbeat.v', 'data/increment.v'], fileset)
@@ -215,13 +524,205 @@ def test_write_fileset(datadir):
     d.set_topmodule('heartbeat', fileset)
 
     fileset = 'tb'
-    d.add_file(['data/tb.v'], fileset)
+    d.add_file('data/heartbeat_tb.v', fileset)
     d.add_define('VERILATOR', fileset)
 
     d.write_fileset(filename="heartbeat.f", fileset=['rtl', 'tb'])
 
-    golden = Path(os.path.join(datadir, 'heartbeat.f'))
-    assert Path('heartbeat.f').read_text() == golden.read_text()
+    assert Path("heartbeat.f").read_text().splitlines() == [
+        '// test / rtl / include directories',
+        f'+incdir+{os.path.abspath(datadir)}',
+        '// test / rtl / defines',
+        '+define+ASIC',
+        '// test / rtl / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "heartbeat.v"))}',
+        f'{os.path.abspath(os.path.join(datadir, "increment.v"))}',
+        '// test / tb / defines',
+        '+define+VERILATOR',
+        '// test / tb / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "heartbeat_tb.v"))}',
+    ]
+
+
+def test_write_fileset_using_fileformat(datadir):
+    d = DesignSchema("test")
+    d.cwd = os.path.dirname(datadir)
+
+    fileset = 'rtl'
+    d.add_file(['data/heartbeat.v', 'data/increment.v'], fileset)
+    d.add_define('ASIC', fileset)
+    d.add_idir('./data', fileset)
+    d.set_topmodule('heartbeat', fileset)
+
+    fileset = 'tb'
+    d.add_file('data/heartbeat_tb.v', fileset)
+    d.add_define('VERILATOR', fileset)
+
+    d.write_fileset(filename="heartbeat.cmd", fileset=['rtl', 'tb'], fileformat="flist")
+
+    assert Path("heartbeat.cmd").read_text().splitlines() == [
+        '// test / rtl / include directories',
+        f'+incdir+{os.path.abspath(datadir)}',
+        '// test / rtl / defines',
+        '+define+ASIC',
+        '// test / rtl / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "heartbeat.v"))}',
+        f'{os.path.abspath(os.path.join(datadir, "increment.v"))}',
+        '// test / tb / defines',
+        '+define+VERILATOR',
+        '// test / tb / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "heartbeat_tb.v"))}',
+    ]
+
+
+def test_write_fileset_duplicate(datadir):
+    d = DesignSchema("test")
+    d.cwd = os.path.dirname(datadir)
+
+    fileset = 'rtl'
+    d.add_file(['data/heartbeat.v', 'data/increment.v'], fileset)
+    d.add_define('ASIC', fileset)
+    d.add_define('VERILATOR', fileset)
+    d.add_idir('./data', fileset)
+    d.set_topmodule('heartbeat', fileset)
+
+    fileset = 'tb'
+    d.add_file('data/heartbeat_tb.v', fileset)
+    d.add_define('VERILATOR', fileset)
+
+    d.write_fileset(filename="heartbeat.f", fileset=['rtl', 'tb'])
+
+    assert Path("heartbeat.f").read_text().splitlines() == [
+        '// test / rtl / include directories',
+        f'+incdir+{os.path.abspath(datadir)}',
+        '// test / rtl / defines',
+        '+define+ASIC',
+        '+define+VERILATOR',
+        '// test / rtl / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "heartbeat.v"))}',
+        f'{os.path.abspath(os.path.join(datadir, "increment.v"))}',
+        '// test / tb / defines',
+        '// +define+VERILATOR',
+        '// test / tb / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "heartbeat_tb.v"))}',
+    ]
+
+
+def test_write_fileset_with_fileset(datadir):
+    d = DesignSchema("test")
+    d.cwd = os.path.dirname(datadir)
+
+    fileset = 'rtl'
+    d.add_file(['data/heartbeat.v', 'data/increment.v'], fileset)
+    d.add_define('ASIC', fileset)
+    d.add_idir('./data', fileset)
+    d.set_topmodule('heartbeat', fileset)
+
+    with d.active_fileset("rtl"):
+        d.write_fileset(filename="heartbeat.f")
+
+    assert Path("heartbeat.f").read_text().splitlines() == [
+        '// test / rtl / include directories',
+        f'+incdir+{os.path.abspath(datadir)}',
+        '// test / rtl / defines',
+        '+define+ASIC',
+        '// test / rtl / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "heartbeat.v"))}',
+        f'{os.path.abspath(os.path.join(datadir, "increment.v"))}'
+    ]
+
+
+def test_read_fileset(datadir):
+    d = DesignSchema("test")
+
+    d.read_fileset(os.path.join(datadir, "heartbeat.f"), fileset="rtl")
+    assert d.getkeys("dataroot") == ('flist-test-rtl-heartbeat.f-0', )
+    assert d.get("dataroot", "flist-test-rtl-heartbeat.f-0", "path") == os.path.abspath(datadir)
+    assert d.get_idir("rtl") == [os.path.abspath(datadir)]
+    assert d.get_define("rtl") == ['ASIC']
+    assert d.get_file("rtl") == [
+        os.path.abspath(os.path.join(datadir, 'heartbeat.v')),
+        os.path.abspath(os.path.join(datadir, 'increment.v'))
+    ]
+    assert d.get("fileset", "rtl", "file", "verilog") == [
+        'heartbeat.v',
+        'increment.v'
+    ]
+    assert d.get("fileset", "rtl", "file", "verilog", field="package") == [
+        'flist-test-rtl-heartbeat.f-0',
+        'flist-test-rtl-heartbeat.f-0'
+    ]
+
+
+def test_read_fileset_with_abspath(datadir):
+    d = DesignSchema("test")
+    d.add_file([datadir + '/heartbeat.v', datadir + '/increment.v'], "rtl")
+    d.write_fileset("test.f", fileset="rtl")
+
+    d = DesignSchema("new")
+    d.read_fileset("test.f", fileset="test")
+
+    assert d.getkeys("dataroot") == ('flist-new-test-test.f-0', )
+    assert d.get("dataroot", "flist-new-test-test.f-0", "path") == os.path.abspath(datadir)
+    assert d.get_file("test") == [
+        os.path.abspath(os.path.join(datadir, 'heartbeat.v')),
+        os.path.abspath(os.path.join(datadir, 'increment.v'))
+    ]
+
+
+def test_read_fileset_with_fileset(datadir):
+    d = DesignSchema("test")
+
+    with d.active_fileset("rtl"):
+        d.read_fileset(os.path.join(datadir, "heartbeat.f"))
+    assert d.getkeys("dataroot") == ('flist-test-rtl-heartbeat.f-0', )
+    assert d.get("dataroot", "flist-test-rtl-heartbeat.f-0", "path") == os.path.abspath(datadir)
+    assert d.get_idir("rtl") == [os.path.abspath(datadir)]
+    assert d.get_define("rtl") == ['ASIC']
+    assert d.get_file("rtl") == [
+        os.path.abspath(os.path.join(datadir, 'heartbeat.v')),
+        os.path.abspath(os.path.join(datadir, 'increment.v'))
+    ]
+
+
+def test_read_fileset_no_filepath():
+    with pytest.raises(ValueError, match="filename cannot be None"):
+        DesignSchema("test").read_fileset(None)
+
+
+def test_read_fileset_invalid_filetype():
+    with pytest.raises(ValueError, match="Unable to determine filetype of: test.invalid"):
+        DesignSchema("test").read_fileset("test.invalid")
+
+
+def test_read_fileset_invalid_fileformat():
+    with pytest.raises(ValueError, match="invalid is not a supported filetype"):
+        DesignSchema("test").read_fileset("test.f", fileformat="invalid")
+
+
+def test_read_fileset_multiple_packages(datadir):
+    d = DesignSchema("test")
+
+    os.makedirs("files1", exist_ok=True)
+    os.makedirs("files2", exist_ok=True)
+    shutil.copy(os.path.join(datadir, "heartbeat.v"), "files1")
+    shutil.copy(os.path.join(datadir, "increment.v"), "files2")
+
+    with open("flist.f", "w") as f:
+        f.write("files1/heartbeat.v\n")
+        f.write("files2/increment.v\n")
+
+    d.read_fileset("flist.f", fileset="rtl")
+
+    assert d.getkeys("dataroot") == ('flist-test-rtl-flist.f-0', 'flist-test-rtl-flist.f-1')
+    assert d.get("dataroot", "flist-test-rtl-flist.f-0", "path") == os.path.abspath("files1")
+    assert d.get("dataroot", "flist-test-rtl-flist.f-1", "path") == os.path.abspath("files2")
+    assert d.get_idir("rtl") == []
+    assert d.get_define("rtl") == []
+    assert d.get_file("rtl") == [
+        os.path.abspath("files1/heartbeat.v"),
+        os.path.abspath("files2/increment.v"),
+    ]
 
 
 def test_heartbeat_example(datadir):
@@ -256,9 +757,22 @@ def test_heartbeat_example(datadir):
 
             # dependencies
             self.add_dep(Increment())
+            with self.active_fileset("rtl"):
+                self.add_depfileset("increment", "rtl")
 
     dut = Heartbeat()
     assert dut.get("deps") == ["increment"]
+
+    dut.write_fileset(filename="heartbeat.f", fileset=['rtl', 'testbench'])
+
+    assert Path("heartbeat.f").read_text().splitlines() == [
+        '// heartbeat / rtl / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "heartbeat_increment.v"))}',
+        '// increment / rtl / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "increment.v"))}',
+        '// heartbeat / testbench / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "heartbeat_tb.v"))}'
+    ]
 
 
 def test_active_fileset_invalid():
@@ -282,17 +796,27 @@ def test_options_active_fileset():
         d.set_topmodule('mytop')
         assert d.get_topmodule() == 'mytop'
 
+        Path("incdir1").mkdir(exist_ok=True)
+        Path("incdir2").mkdir(exist_ok=True)
+
         # idir
-        idirs = ['/home/acme/incdir1', '/home/acme/incdir2']
-        for item in idirs:
+        for item in ['incdir1', 'incdir2']:
             d.add_idir(item)
-        assert d.get_idir() == idirs
+        assert d.get_idir() == [
+            os.path.abspath("incdir1"),
+            os.path.abspath("incdir2")
+        ]
+
+        Path("libdir1").mkdir(exist_ok=True)
+        Path("libdir2").mkdir(exist_ok=True)
 
         # libdirs
-        libdirs = ['/usr/lib1', '/usr/lib2']
-        for item in libdirs:
+        for item in ["libdir1", "libdir2"]:
             d.add_libdir(item)
-        assert d.get_libdir() == libdirs
+        assert d.get_libdir() == [
+            os.path.abspath("libdir1"),
+            os.path.abspath("libdir2")
+        ]
 
         # libs
         libs = ['lib1', 'lib2']
@@ -326,29 +850,375 @@ def test_options_active_fileset_overide_context():
         assert d.get_topmodule("notrtl") == 'mytop_other'
 
 
-def test_options_active_fileset_ensure_no_leftovers():
+def test_options_active_fileset_nested():
     d = DesignSchema("test")
 
-    assert d._DesignSchema__fileset is None
     # create fileset context
     with d.active_fileset("rtl"):
-        assert d._DesignSchema__fileset == "rtl"
-    assert d._DesignSchema__fileset is None
+        # top module
+        d.set_topmodule('mytop')
+        assert d.get_topmodule() == 'mytop'
+
+        with d.active_fileset("notrtl"):
+            d.set_topmodule('mytop_other')
+            assert d.get_topmodule() == 'mytop_other'
+        assert d.get_topmodule() == 'mytop'
+        assert d.get_topmodule("notrtl") == 'mytop_other'
 
 
 def test_add_file_active_fileset():
     d = DesignSchema("test")
 
+    Path('one.v').touch()
+    Path('two.v').touch()
+
     with d.active_fileset("rtl"):
         # explicit file add
-        files = ['one.v', 'two.v']
-        d.add_file(files, filetype='verilog')
-        assert d.get_file(filetype="verilog") == files
-    assert d.get('fileset', "rtl", 'file', 'verilog') == files
+        d.add_file(['one.v', 'two.v'], filetype='verilog')
+        assert d.get_file(filetype="verilog") == [
+            os.path.abspath("one.v"),
+            os.path.abspath("two.v")
+        ]
+    assert d.get('fileset', "rtl", 'file', 'verilog') == [
+        "one.v",
+        "two.v"
+    ]
+
+    Path('tb.v').touch()
+    Path('dut.v').touch()
 
     with d.active_fileset("testbench"):
         # filetype mapping
         d.add_file('tb.v')
         d.add_file('dut.v')
-        assert d.get_file() == ['tb.v', 'dut.v']
+        assert d.get_file() == [
+            os.path.abspath("tb.v"),
+            os.path.abspath("dut.v")
+        ]
     assert d.get('fileset', 'testbench', 'file', 'verilog') == ['tb.v', 'dut.v']
+
+
+def test_get_fileset():
+    class Increment(DesignSchema):
+        def __init__(self):
+            super().__init__('increment')
+
+            with self.active_fileset("rtl.increment"):
+                self.add_file("increment.v")
+
+    incr_object = Increment()
+
+    class Heartbeat(DesignSchema):
+        def __init__(self):
+            super().__init__('heartbeat')
+
+            # dependencies
+            self.add_dep(incr_object)
+            with self.active_fileset("rtl"):
+                self.add_file("heartbeat_increment.v")
+                self.add_depfileset("increment", "rtl.increment")
+
+            with self.active_fileset("testbench"):
+                self.add_file("tb.v")
+
+    dut = Heartbeat()
+    assert dut.get_fileset("rtl") == [
+        (dut, 'rtl'),
+        (incr_object, 'rtl.increment'),
+    ]
+
+    assert dut.get_fileset(["rtl", "testbench"]) == [
+        (dut, 'rtl'),
+        (incr_object, 'rtl.increment'),
+        (dut, 'testbench')
+    ]
+
+    with pytest.raises(LookupError, match="constraint is not defined in heartbeat"):
+        dut.get_fileset("constraint")
+
+
+def test_get_fileset_duplicate():
+    class Increment(DesignSchema):
+        def __init__(self):
+            super().__init__('increment')
+
+            with self.active_fileset("rtl.increment"):
+                self.add_file("increment.v")
+
+    incr_object = Increment()
+
+    class Heartbeat(DesignSchema):
+        def __init__(self):
+            super().__init__('heartbeat')
+
+            # dependencies
+            self.add_dep(incr_object)
+            with self.active_fileset("rtl"):
+                self.add_file("heartbeat_increment.v")
+                self.add_depfileset("increment", "rtl.increment")
+
+            with self.active_fileset("testbench"):
+                self.add_file("tb.v")
+                self.add_depfileset("increment", "rtl.increment")
+
+    dut = Heartbeat()
+    assert dut.get_fileset(["rtl", "testbench"]) == [
+        (dut, 'rtl'),
+        (incr_object, 'rtl.increment'),
+        (dut, 'testbench')
+    ]
+
+
+def test_get_fileset_alias():
+    class IncrementAlias(DesignSchema):
+        def __init__(self):
+            super().__init__('increment_alias')
+
+            with self.active_fileset("rtl.alias"):
+                self.add_file("alias.v")
+            with self.active_fileset("rtl.increment"):
+                self.add_file("increment.v")
+
+    class Increment(DesignSchema):
+        def __init__(self):
+            super().__init__('increment')
+
+            with self.active_fileset("rtl.increment"):
+                self.add_file("increment.v")
+
+    incr_object = Increment()
+
+    class Heartbeat(DesignSchema):
+        def __init__(self):
+            super().__init__('heartbeat')
+
+            # dependencies
+            self.add_dep(incr_object)
+            with self.active_fileset("rtl"):
+                self.add_file("heartbeat_increment.v")
+                self.add_depfileset("increment", "rtl.increment")
+
+            with self.active_fileset("testbench"):
+                self.add_file("tb.v")
+                self.add_depfileset("increment", "rtl.increment")
+
+    dut = Heartbeat()
+    assert dut.get_fileset(["rtl", "testbench"]) == [
+        (dut, 'rtl'),
+        (incr_object, 'rtl.increment'),
+        (dut, 'testbench')
+    ]
+
+    alias = IncrementAlias()
+
+    assert dut.get_fileset(
+        ["rtl", "testbench"],
+        alias={("increment", "rtl.increment"): (alias, "rtl.alias")}) == [
+        (dut, 'rtl'),
+        (alias, 'rtl.alias'),
+        (dut, 'testbench')
+    ]
+    assert dut.get_fileset(
+        ["rtl", "testbench"],
+        alias={("increment", "rtl.increment"): (alias, None)}) == [
+        (dut, 'rtl'),
+        (alias, 'rtl.increment'),
+        (dut, 'testbench')
+    ]
+    assert dut.get_fileset(
+        ["rtl", "testbench"],
+        alias={("increment", "rtl.increment"): (None, None)}) == [
+        (dut, 'rtl'),
+        (dut, 'testbench')
+    ]
+
+
+def test_write_fileset_alias(datadir):
+    datadir = Path(datadir)
+
+    class IncrementAlias(DesignSchema):
+        def __init__(self):
+            super().__init__('increment_alias')
+
+            with self.active_fileset("rtl.alias"):
+                self.add_file(datadir / "increment.v")
+
+            with self.active_fileset("rtl.alias_other"):
+                self.add_file(datadir / "increment.v")
+
+    class Increment(DesignSchema):
+        def __init__(self):
+            super().__init__('increment')
+
+            with self.active_fileset("rtl.increment"):
+                self.add_file(datadir / "increment.v")
+
+    incr_object = Increment()
+
+    class Heartbeat(DesignSchema):
+        def __init__(self):
+            super().__init__('heartbeat')
+
+            # dependencies
+            self.add_dep(incr_object)
+            with self.active_fileset("rtl"):
+                self.add_file(datadir / "heartbeat_increment.v")
+                self.add_depfileset("increment", "rtl.increment")
+
+            with self.active_fileset("testbench"):
+                self.add_file(datadir / "heartbeat_tb.v")
+                self.add_depfileset("increment", "rtl.increment")
+
+    dut = Heartbeat()
+    alias = IncrementAlias()
+
+    dut.write_fileset(
+        "fileset.f",
+        ["rtl", "testbench"],
+        depalias={("increment", "rtl.increment"): (alias, "rtl.alias")})
+
+    assert Path("fileset.f").read_text().splitlines() == [
+        '// heartbeat / rtl / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "heartbeat_increment.v"))}',
+        '// increment_alias / rtl.alias / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "increment.v"))}',
+        '// heartbeat / testbench / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "heartbeat_tb.v"))}',
+    ]
+
+    dut.write_fileset(
+        "fileset_double.f",
+        ["rtl", "testbench"],
+        depalias={("increment", "rtl.increment"): (alias, ["rtl.alias", "rtl.alias_other"])})
+
+    assert Path("fileset_double.f").read_text().splitlines() == [
+        '// heartbeat / rtl / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "heartbeat_increment.v"))}',
+        '// increment_alias / rtl.alias / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "increment.v"))}',
+        '// increment_alias / rtl.alias_other / verilog files',
+        f'// {os.path.abspath(os.path.join(datadir, "increment.v"))}',
+        '// heartbeat / testbench / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "heartbeat_tb.v"))}',
+    ]
+
+
+def test_write_fileset_same_datroot_name(datadir):
+    dataroot0 = Path(datadir)
+    dataroot1 = Path(dataroot0.parent)
+
+    class Increment(DesignSchema):
+        def __init__(self):
+            super().__init__('increment')
+
+            self.set_dataroot("root", dataroot0)
+
+            with self.active_fileset("rtl.increment"), self.active_dataroot("root"):
+                self.add_file("increment.v")
+
+    incr_object = Increment()
+
+    class Heartbeat(DesignSchema):
+        def __init__(self):
+            super().__init__('heartbeat')
+
+            self.set_dataroot("root", dataroot1)
+
+            # dependencies
+            self.add_dep(incr_object)
+            with self.active_fileset("rtl"), self.active_dataroot("root"):
+                self.add_file("data/heartbeat_increment.v")
+                self.add_depfileset("increment", "rtl.increment")
+
+            with self.active_fileset("testbench"), self.active_dataroot("root"):
+                self.add_file("data/heartbeat_tb.v")
+
+    dut = Heartbeat()
+
+    assert dut.get("dataroot", "root", "path") != incr_object.get("dataroot", "root", "path")
+
+    dut.write_fileset("fileset.f",  ["rtl", "testbench"])
+
+    assert Path("fileset.f").read_text().splitlines() == [
+        '// heartbeat / rtl / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "heartbeat_increment.v"))}',
+        '// increment / rtl.increment / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "increment.v"))}',
+        '// heartbeat / testbench / verilog files',
+        f'{os.path.abspath(os.path.join(datadir, "heartbeat_tb.v"))}',
+    ]
+
+
+def test_add_dep_invalid():
+    schema = DesignSchema()
+
+    with pytest.raises(TypeError,
+                       match="Cannot add an object of type: <class "
+                       "'siliconcompiler.schema.baseschema.BaseSchema'>"):
+        schema.add_dep(BaseSchema())
+
+
+def test_add_dep_same_name():
+    schema = DesignSchema("name0")
+
+    with pytest.raises(ValueError, match="Cannot add a dependency with the same name"):
+        schema.add_dep(DesignSchema("name0"))
+
+
+def test_copy_fileset():
+    schema = DesignSchema()
+
+    with schema.active_fileset("rtl"):
+        assert schema.set_topmodule("top")
+        assert schema.add_define("def")
+        assert schema.set_param("P", "1")
+        assert schema.add_file("top.v")
+
+    schema.copy_fileset("rtl", "rtl.other")
+    assert schema.get("fileset", "rtl.other", "topmodule") == "top"
+    assert schema.get("fileset", "rtl.other", "define") == ["def"]
+    assert schema.get("fileset", "rtl.other", "param", "P") == "1"
+    assert schema.get("fileset", "rtl.other", "file", "verilog") == ["top.v"]
+
+    with schema.active_fileset("rtl.other"):
+        assert schema.set_topmodule("test")
+
+    assert schema.get("fileset", "rtl", "topmodule") == "top"
+    assert schema.get("fileset", "rtl.other", "topmodule") == "test"
+
+
+def test_copy_fileset_fail_overwrite():
+    schema = DesignSchema()
+
+    with schema.active_fileset("rtl"):
+        assert schema.set_topmodule("top")
+        assert schema.add_define("def")
+        assert schema.set_param("P", "1")
+        assert schema.add_file("top.v")
+
+    with pytest.raises(ValueError, match="rtl already exists"):
+        schema.copy_fileset("rtl", "rtl")
+
+
+def test_copy_fileset_overwrite():
+    schema = DesignSchema()
+
+    with schema.active_fileset("rtl"):
+        assert schema.set_topmodule("top")
+        assert schema.add_define("def")
+        assert schema.set_param("P", "1")
+        assert schema.add_file("top.v")
+
+    schema.copy_fileset("rtl", "rtl.other")
+    assert schema.get("fileset", "rtl.other", "topmodule") == "top"
+    assert schema.get("fileset", "rtl.other", "define") == ["def"]
+    assert schema.get("fileset", "rtl.other", "param", "P") == "1"
+    assert schema.get("fileset", "rtl.other", "file", "verilog") == ["top.v"]
+
+    with schema.active_fileset("rtl.other"):
+        assert schema.set_topmodule("test")
+
+    assert schema.get("fileset", "rtl", "topmodule") == "top"
+    schema.copy_fileset("rtl.other", "rtl", clobber=True)
+    assert schema.get("fileset", "rtl", "topmodule") == "test"
+    assert schema.get("fileset", "rtl.other", "topmodule") == "test"

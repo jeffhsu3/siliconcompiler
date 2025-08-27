@@ -1,3 +1,4 @@
+import json
 import pytest
 
 from siliconcompiler.schema import BaseSchema
@@ -146,6 +147,22 @@ def test_set():
         "type": "set",
         "key": ("test0", "test1"),
         "value": "hello",
+        "field": "value",
+        "step": None,
+        "index": None
+    }]
+
+
+def test_set_with_setinput():
+    journal = Journal()
+    journal.start()
+    assert "set" in journal.get_types()
+
+    journal.record("set", ["test0", "test1"], set(["hello"]), field="value")
+    assert journal.get() == [{
+        "type": "set",
+        "key": ("test0", "test1"),
+        "value": ["hello"],
         "field": "value",
         "step": None,
         "index": None
@@ -425,3 +442,41 @@ def test_forward_exception_with_key_add_replay(error, monkeypatch):
                        match=r"error while adding to \[test0,test1\]: "
                              r"this is an error from the param"):
         journal.replay(schema)
+
+
+def test_replay_file():
+    replay = [
+        {
+            "type": "add",
+            "key": ("test0", "test1"),
+            "value": "hello",
+            "field": "value",
+            "step": None,
+            "index": None
+        }
+    ]
+    with open("replay.json", "w") as f:
+        json.dump({"__journal__": replay}, f)
+
+    schema = BaseSchema()
+    edit = EditableSchema(schema)
+    param = Parameter("[str]")
+    edit.insert("test0", "test1", param)
+
+    assert schema.get("test0", "test1") == []
+    Journal.replay_file(schema, "replay.json")
+    assert schema.get("test0", "test1") == ["hello"]
+
+
+def test_replay_file_empty():
+    with open("replay.json", "w") as f:
+        json.dump({}, f)
+
+    schema = BaseSchema()
+    edit = EditableSchema(schema)
+    param = Parameter("[str]")
+    edit.insert("test0", "test1", param)
+
+    assert schema.get("test0", "test1") == []
+    Journal.replay_file(schema, "replay.json")
+    assert schema.get("test0", "test1") == []

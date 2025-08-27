@@ -1,13 +1,12 @@
 # Copyright 2020 Silicon Compiler Authors. All Rights Reserved.
-
-# Standard Modules
 import os
 import sys
 
-import siliconcompiler
+from siliconcompiler import Chip
+from siliconcompiler import SiliconCompilerError
 from siliconcompiler.utils import get_default_iomap
 from siliconcompiler.targets import skywater130_demo
-from siliconcompiler import SiliconCompilerError
+from siliconcompiler.apps._common import UNSET_DESIGN
 
 
 def _infer_designname(chip):
@@ -19,7 +18,7 @@ def _infer_designname(chip):
             sourcesets.insert(0, sourceset)
     for sourceset in sourcesets:
         for filetype in chip.getkeys('input', sourceset):
-            all_vals = chip.schema.get('input', sourceset, filetype, field=None).getvalues()
+            all_vals = chip.get('input', sourceset, filetype, field=None).getvalues()
             if all_vals:
                 # just look at first value
                 sources, _, _ = all_vals[0]
@@ -61,12 +60,9 @@ def main():
     Sources: https://github.com/siliconcompiler/siliconcompiler
     ------------------------------------------------------------
     """
-    # TODO: this is a hack to get around design name requirement: since legal
-    # design names probably can't contain spaces, we can detect if it is unset.
-    UNSET_DESIGN = '  unset  '
 
     # Create a base chip class.
-    chip = siliconcompiler.Chip(UNSET_DESIGN)
+    chip = Chip(UNSET_DESIGN)
 
     # Read command-line inputs and generate Chip objects to run the flow on.
     try:
