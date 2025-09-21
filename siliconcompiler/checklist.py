@@ -2,20 +2,22 @@ import re
 
 import os.path
 
+from typing import Tuple
+
 from siliconcompiler.schema import NamedSchema
-from siliconcompiler.schema import EditableSchema, Parameter, Scope
+from siliconcompiler.schema import EditableSchema, Parameter, Scope, BaseSchema
 from siliconcompiler.schema.utils import trim
 
 from siliconcompiler import NodeStatus, utils
 
 
-class ChecklistSchema(NamedSchema):
+class Checklist(NamedSchema):
     """
     A class for managing design checklists and their verification.
     """
     def __init__(self, name=None):
         """
-        Initializes the ChecklistSchema object.
+        Initializes the Checklist object.
 
         Args:
             name (str, optional): The name of the checklist standard. Defaults to None.
@@ -225,7 +227,30 @@ class ChecklistSchema(NamedSchema):
         Returns the meta data for getdict
         """
 
-        return ChecklistSchema.__name__
+        return Checklist.__name__
+
+    def _generate_doc(self, doc,
+                      ref_root: str = "",
+                      key_offset: Tuple[str] = None,
+                      detailed: bool = True):
+        from .schema.docs.utils import build_section
+        settings = build_section('Configuration', f"{ref_root}-config")
+
+        if not key_offset:
+            key_offset = []
+
+        for key in self.getkeys():
+            criteria = build_section(key, f"{ref_root}-config-{key}")
+            params = BaseSchema._generate_doc(self.get(key, field="schema"),
+                                              doc,
+                                              ref_root=f"{ref_root}-config-{key}",
+                                              key_offset=(*key_offset, "checklist", self.name),
+                                              detailed=False)
+            if params:
+                criteria += params
+                settings += criteria
+
+        return settings
 
 
 ############################################

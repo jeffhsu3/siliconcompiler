@@ -6,7 +6,7 @@ import os.path
 
 from siliconcompiler.utils import sc_open
 
-from siliconcompiler import TaskSchema
+from siliconcompiler.tool import TaskSchema
 from siliconcompiler.asic import ASICTaskSchema
 
 
@@ -41,28 +41,28 @@ class ConvertTask(ASICTaskSchema, TaskSchema):
 
         self.add_required_key("option", "design")
         self.add_required_key("option", "fileset")
-        if self.schema().get("option", "alias"):
+        if self.project.get("option", "alias"):
             self.add_required_key("option", "alias")
 
         # Mark required
-        for lib, fileset in self.schema().get_filesets():
-            if lib.get("fileset", fileset, "idir"):
+        for lib, fileset in self.project.get_filesets():
+            if lib.has_idir(fileset):
                 self.add_required_key(lib, "fileset", fileset, "idir")
             if lib.get("fileset", fileset, "define"):
                 self.add_required_key(lib, "fileset", fileset, "define")
-            if lib.get_file(fileset=fileset, filetype="c"):
+            if lib.has_file(fileset=fileset, filetype="c"):
                 self.add_required_key(lib, "fileset", fileset, "file", "c")
-            elif lib.get_file(fileset=fileset, filetype="llvm"):
+            elif lib.has_file(fileset=fileset, filetype="llvm"):
                 self.add_required_key(lib, "fileset", fileset, "file", "llvm")
 
     def runtime_options(self):
         options = super().runtime_options()
 
-        filesets = self.schema().get_filesets()
+        filesets = self.project.get_filesets()
         idirs = []
         defines = []
         for lib, fileset in filesets:
-            idirs.extend(lib.find_files("fileset", fileset, "idir"))
+            idirs.extend(lib.get_idir(fileset))
             defines.extend(lib.get("fileset", fileset, "define"))
 
         for idir in idirs:
@@ -99,10 +99,10 @@ class ConvertTask(ASICTaskSchema, TaskSchema):
 
         options.append('--disable-function-proxy')
 
-        if self.schema().valid("asic", "mainlib"):
-            device = self.schema().get("library",
-                                       self.schema().get("asic", "mainlib"),
-                                       "tool", "bambu", "device")
+        if self.project.valid("asic", "mainlib"):
+            device = self.project.get("library",
+                                      self.project.get("asic", "mainlib"),
+                                      "tool", "bambu", "device")
             if device:
                 options.append(f'--device={device}')
 

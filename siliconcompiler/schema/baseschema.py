@@ -29,6 +29,7 @@ from typing import Dict, Type, Tuple, Union, Set, Callable, List
 
 from .parameter import Parameter, NodeValue
 from .journal import Journal
+from ._metadata import version
 
 
 class BaseSchema:
@@ -36,6 +37,9 @@ class BaseSchema:
     This class maintains the access and file IO operations for the schema.
     It can be modified using :class:`EditableSchema`.
     '''
+
+    _version_key = "schemaversion"
+    __version = tuple([int(v) for v in version.split('.')])
 
     def __init__(self):
         self.__manifest = {}
@@ -135,6 +139,14 @@ class BaseSchema:
             cls = cls_map.get(meta.get("sctype", None), None)
         return cls
 
+    @staticmethod
+    def __extractversion(manifest: Dict):
+        schema_version = manifest.get(BaseSchema._version_key, None)
+        if schema_version:
+            param = Parameter.from_dict(schema_version, [BaseSchema._version_key], None)
+            return tuple([int(v) for v in param.get().split('.')])
+        return None
+
     def _from_dict(self, manifest: Dict, keypath: Tuple[str], version: str = None):
         '''
         Decodes a dictionary into a schema object
@@ -144,6 +156,12 @@ class BaseSchema:
             keypath (list of str): Path to the current keypath.
             version (packaging.Version): Version of the dictionary schema
         '''
+        # find schema version
+        if not version:
+            version = BaseSchema.__extractversion(manifest)
+
+            if version is None:
+                version = BaseSchema.__version
 
         handled = set()
         missing = set()
@@ -330,6 +348,9 @@ class BaseSchema:
                                       use_default=use_default,
                                       require_leaf=require_leaf,
                                       complete_path=complete_path)
+        elif len(keypath) != 1:
+            # Key extends beyond parameter
+            raise KeyError
         return key_param
 
     def get(self, *keypath: str, field: str = 'value',
@@ -577,6 +598,9 @@ class BaseSchema:
         try:
             param = self.__search(*keypath, use_default=default_valid, require_leaf=False)
         except KeyError:
+            return False
+
+        if param is None:
             return False
 
         if check_complete:
@@ -1116,3 +1140,57 @@ class BaseSchema:
 
             for param in nodevalues:
                 param.set(value, field=field)
+
+    def _generate_doc(self, doc,
+                      ref_root: str = "",
+                      key_offset: Tuple[str] = None,
+                      detailed: bool = True):
+        from .docs.utils import build_section_with_target, build_schema_value_table, get_key_ref
+        from docutils import nodes
+
+        if not key_offset:
+            key_offset = []
+
+        if detailed:
+            sections = []
+            if self.__default:
+                if isinstance(self.__default, Parameter):
+                    sections.extend(Parameter._generate_doc(self.__default, doc))
+                else:
+                    sections.extend(BaseSchema._generate_doc(self.__default,
+                                                             doc,
+                                                             ref_root=ref_root,
+                                                             key_offset=key_offset,
+                                                             detailed=detailed))
+            for name, obj in self.__manifest.items():
+                root = self._parent(root=True)
+
+                section = build_section_with_target(name,
+                                                    get_key_ref(list(self._keypath) + [name],
+                                                                ref=root),
+                                                    doc.state.document)
+                if isinstance(obj, Parameter):
+                    for n in Parameter._generate_doc(obj, doc):
+                        section += n
+                else:
+                    for n in BaseSchema._generate_doc(obj,
+                                                      doc,
+                                                      ref_root=ref_root,
+                                                      key_offset=key_offset,
+                                                      detailed=detailed):
+                        section += n
+                sections.append(section)
+
+            # Sort all sections alphabetically by title. We may also have nodes
+            # in this list that aren't sections if `schema` has a 'default'
+            # entry that's a leaf. In this case, we sort this as an empty string
+            # in order to put this node at the beginning of the list.
+            return sorted(sections, key=lambda s: s[0][0] if isinstance(s, nodes.section) else '')
+        else:
+            params = {}
+            for key in self.allkeys(include_default=False):
+                params[key] = self.get(*key, field=None)
+            table = build_schema_value_table(params, doc.env.docname, (*key_offset, *self._keypath))
+            if table:
+                return table
+            return None

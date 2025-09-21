@@ -41,7 +41,7 @@ if { [sc_cfg_tool_task_get var write_cdl] } {
             }
         }
     }
-    write_cdl -masters $sc_cdl_masters "outputs/${sc_design}.cdl"
+    write_cdl -masters $sc_cdl_masters "outputs/${sc_topmodule}.cdl"
 }
 
 ###############################
@@ -107,6 +107,16 @@ foreach corner $sc_scenarios {
 ###############################
 # Check Power Network
 ###############################
+
+foreach corner $sc_scenarios {
+    if { [sc_cfg_exists constraint timing $corner voltage] } {
+        foreach net [dict keys [sc_cfg_get constraint timing $corner voltage]] {
+            set_pdnsim_net_voltage -corner $corner \
+                -net $net \
+                -voltage [sc_cfg_get constraint timing $corner voltage $net]
+        }
+    }
+}
 
 foreach net [sc_psm_check_nets] {
     foreach corner $sc_scenarios {

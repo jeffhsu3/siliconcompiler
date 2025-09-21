@@ -17,14 +17,15 @@ import os.path
 from pathlib import Path
 from typing import List, Union
 
-from siliconcompiler import PDKSchema, ASICTaskSchema, StdCellLibrarySchema, sc_open
+from siliconcompiler import PDK, StdCellLibrary, sc_open
+from siliconcompiler.asic import ASICTaskSchema
 
 
-class KLayoutPDK(PDKSchema):
+class KLayoutPDK(PDK):
     """
     Schema for defining technology-specific parameters for the KLayout tool.
 
-    This class extends the base PDKSchema to manage settings related to
+    This class extends the base PDK to manage settings related to
     KLayout, such as stream units and which layers to hide on initial display.
     """
     def __init__(self):
@@ -81,11 +82,11 @@ class KLayoutPDK(PDKSchema):
             self.add("tool", "klayout", "drc_params", (deck, p))
 
 
-class KLayoutLibrary(StdCellLibrarySchema):
+class KLayoutLibrary(StdCellLibrary):
     """
     Schema for defining standard cell library parameters for the KLayout tool.
 
-    This class extends the base StdCellLibrarySchema to manage settings for
+    This class extends the base StdCellLibrary to manage settings for
     KLayout, such as defining cells that are allowed to be missing from the
     final stream file without generating an error.
     """
@@ -128,7 +129,7 @@ class KLayoutTask(ASICTaskSchema):
         super().setup()
 
         klayout_exe = 'klayout'
-        if self.schema().get('option', 'scheduler', 'name', step=self.step, index=self.index) != \
+        if self.project.get('option', 'scheduler', 'name', step=self.step, index=self.index) != \
                 'docker':
             if platform.system() == 'Windows':
                 klayout_exe = 'klayout_app.exe'
@@ -171,7 +172,7 @@ class KLayoutTask(ASICTaskSchema):
         with self.active_dataroot("refdir"):
             self.set_refdir("scripts")
 
-        if self.schema().get('option', 'nodisplay'):
+        if self.project.get('option', 'nodisplay'):
             # Tells QT to use the offscreen platform if nodisplay is used
             self.set_environmentalvariable('QT_QPA_PLATFORM', 'offscreen')
 
@@ -197,3 +198,22 @@ class KLayoutTask(ASICTaskSchema):
 
         if "area" in metrics:
             self.record_metric("totalarea", metrics["area"], metrics_file, "um^2")
+
+    @classmethod
+    def make_docs(cls):
+        from siliconcompiler import Flowgraph, Design, ASICProject
+        from siliconcompiler.scheduler import SchedulerNode
+        from siliconcompiler.targets import freepdk45_demo
+        design = Design("<design>")
+        with design.active_fileset("docs"):
+            design.set_topmodule("top")
+        proj = ASICProject(design)
+        proj.add_fileset("docs")
+        proj.load_target(freepdk45_demo.setup)
+        flow = Flowgraph("docsflow")
+        flow.node("<step>", cls(), index="<index>")
+        proj.set_flow(flow)
+
+        node = SchedulerNode(proj, "<step>", "<index>")
+        node.setup()
+        return node.task

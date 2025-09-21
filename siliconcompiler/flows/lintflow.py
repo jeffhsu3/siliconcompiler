@@ -2,16 +2,17 @@ from siliconcompiler.tools.verilator import lint as verilator_lint
 from siliconcompiler.tools.slang import lint as slang_lint
 
 
-from siliconcompiler import FlowgraphSchema
+from siliconcompiler import Flowgraph
 
 
-class LintFlow(FlowgraphSchema):
+class LintFlow(Flowgraph):
     '''An RTL linting flow.
 
     This flow is designed to check RTL source files for stylistic, semantic,
     and syntactic issues using a specified linting tool.
 
     Supported tools:
+
     * 'slang': A linter based on the Slang compiler.
     * 'verilator': A linter based on the Verilator tool.
     '''

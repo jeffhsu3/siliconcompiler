@@ -6,15 +6,18 @@ from typing import Union, Tuple
 from siliconcompiler.schema import EditableSchema, Parameter, Scope
 from siliconcompiler.schema.utils import trim
 
-from siliconcompiler import Project, TaskSchema, sc_open
+from siliconcompiler import Project, sc_open
+from siliconcompiler.tool import TaskSchema
 
 from siliconcompiler.constraints import \
     ASICTimingConstraintSchema, ASICAreaConstraint, \
     ASICComponentConstraints, ASICPinConstraints
 from siliconcompiler.metrics import ASICMetricsSchema
+from siliconcompiler.flowgraph import RuntimeFlowgraph
+from siliconcompiler.utils import units
 
-from siliconcompiler import PDKSchema
-from siliconcompiler import StdCellLibrarySchema
+from siliconcompiler import PDK
+from siliconcompiler import StdCellLibrary
 
 
 class ASICProject(Project):
@@ -59,7 +62,7 @@ class ASICProject(Project):
         schema.insert(
             "asic", "asiclib",
             Parameter(
-                "[str]",
+                "{str}",
                 scope=Scope.GLOBAL,
                 shorthelp="ASIC: logic libraries",
                 example=["api: chip.set('asic', 'asiclib', 'nangate45')"],
@@ -115,15 +118,15 @@ class ASICProject(Project):
         for PDK and standard cell libraries.
 
         This method extends the base `Project.add_dep` functionality. If the
-        object is a `StdCellLibrarySchema` or `PDKSchema`, it is inserted
+        object is a `StdCellLibrary` or `PDK`, it is inserted
         into the project's library schema, potentially clobbering existing
         entries. For other dependency types, it defers to the parent class's
         `add_dep` method. It also ensures that internal dependencies are
         imported.
 
         Args:
-            obj (Union[StdCellLibrarySchema, PDKSchema, DesignSchema, FlowgraphSchema,
-                       LibrarySchema, ChecklistSchema, List, Set, Tuple]):
+            obj (Union[StdCellLibrary, PDK, Design, Flowgraph,
+                       LibrarySchema, Checklist, List, Set, Tuple]):
                 The dependency object(s) to add.
         """
         if isinstance(obj, (list, set, tuple)):
@@ -131,10 +134,10 @@ class ASICProject(Project):
                 self.add_dep(iobj)
             return
 
-        if isinstance(obj, StdCellLibrarySchema):
+        if isinstance(obj, StdCellLibrary):
             if not self.has_library(obj.name):
                 EditableSchema(self).insert("library", obj.name, obj)
-        elif isinstance(obj, PDKSchema):
+        elif isinstance(obj, PDK):
             if not self.has_library(obj.name):
                 EditableSchema(self).insert("library", obj.name, obj)
         else:
@@ -171,7 +174,7 @@ class ASICProject(Project):
             if pdk not in self.getkeys("library"):
                 error = True
                 self.logger.error(f"{pdk} library has not been loaded")
-            elif not isinstance(self.get("library", pdk, field="schema"), PDKSchema):
+            elif not isinstance(self.get("library", pdk, field="schema"), PDK):
                 error = True
                 self.logger.error(f"{pdk} must be a PDK")
 
@@ -211,15 +214,15 @@ class ASICProject(Project):
 
         return not error
 
-    def set_mainlib(self, library: Union[StdCellLibrarySchema, str]):
+    def set_mainlib(self, library: Union[StdCellLibrary, str]):
         """
         Sets the main standard cell library for the ASIC project.
 
         This library is typically the primary logic library used during the ASIC flow.
-        If a `StdCellLibrarySchema` object is provided, it is first added as a dependency.
+        If a `StdCellLibrary` object is provided, it is first added as a dependency.
 
         Args:
-            library (Union[StdCellLibrarySchema, str]): The standard cell library object
+            library (Union[StdCellLibrary, str]): The standard cell library object
                                                         or its name (string) to be set as the main
                                                         library.
 
@@ -227,9 +230,9 @@ class ASICProject(Project):
             Any: The result of setting the parameter in the schema.
 
         Raises:
-            TypeError: If the provided `library` is not a string or a `StdCellLibrarySchema` object.
+            TypeError: If the provided `library` is not a string or a `StdCellLibrary` object.
         """
-        if isinstance(library, StdCellLibrarySchema):
+        if isinstance(library, StdCellLibrary):
             self.add_dep(library)
             library = library.name
         elif not isinstance(library, str):
@@ -237,24 +240,24 @@ class ASICProject(Project):
 
         return self.set("asic", "mainlib", library)
 
-    def set_pdk(self, pdk: Union[PDKSchema, str]):
+    def set_pdk(self, pdk: Union[PDK, str]):
         """
         Sets the Process Design Kit (PDK) for the ASIC project.
 
         The PDK defines the technology-specific information required for ASIC compilation.
-        If a `PDKSchema` object is provided, it is first added as a dependency.
+        If a `PDK` object is provided, it is first added as a dependency.
 
         Args:
-            pdk (Union[PDKSchema, str]): The PDK object or its name (string)
+            pdk (Union[PDK, str]): The PDK object or its name (string)
                                          to be set as the project's PDK.
 
         Returns:
             Any: The result of setting the parameter in the schema.
 
         Raises:
-            TypeError: If the provided `pdk` is not a string or a `PDKSchema` object.
+            TypeError: If the provided `pdk` is not a string or a `PDK` object.
         """
-        if isinstance(pdk, PDKSchema):
+        if isinstance(pdk, PDK):
             self.add_dep(pdk)
             pdk = pdk.name
         elif not isinstance(pdk, str):
@@ -262,7 +265,7 @@ class ASICProject(Project):
 
         return self.set("asic", "pdk", pdk)
 
-    def add_asiclib(self, library: Union[StdCellLibrarySchema, str], clobber: bool = False):
+    def add_asiclib(self, library: Union[StdCellLibrary, str], clobber: bool = False):
         """
         Adds one or more ASIC logic libraries to be used in the project.
 
@@ -270,7 +273,7 @@ class ASICProject(Project):
         complementing the main library.
 
         Args:
-            library (Union[StdCellLibrarySchema, str]): The standard cell library object
+            library (Union[StdCellLibrary, str]): The standard cell library object
                                                         or its name (string) to add.
             clobber (bool): If True, existing ASIC libraries will be replaced by the new ones.
                             If False, new libraries will be added to the existing list.
@@ -280,7 +283,7 @@ class ASICProject(Project):
             Any: The result of adding the parameter to the schema.
 
         Raises:
-            TypeError: If the provided `library` is not a string or a `StdCellLibrarySchema` object.
+            TypeError: If the provided `library` is not a string or a `StdCellLibrary` object.
         """
         if isinstance(library, (list, set, tuple)):
             if clobber:
@@ -291,7 +294,7 @@ class ASICProject(Project):
                 ret.append(self.add_asiclib(lib))
             return ret
 
-        if isinstance(library, StdCellLibrarySchema):
+        if isinstance(library, StdCellLibrary):
             self.add_dep(library)
             library = library.name
         elif not isinstance(library, str):
@@ -392,7 +395,8 @@ class ASICProject(Project):
         if self.get("asic", "mainlib") not in self.get("asic", "asiclib"):
             # Ensure mainlib is added to asiclib
             self.logger.warning(f'Adding {self.get("asic", "mainlib")} to [asic,asiclib]')
-            self.add("asic", "asiclib", self.get("asic", "mainlib"))
+            asiclibs = [self.get("asic", "mainlib"), *self.get("asic", "asiclib")]
+            self.set("asic", "asiclib", asiclibs)
 
     def _summary_headers(self):
         """
@@ -418,6 +422,52 @@ class ASICProject(Project):
 
         return headers
 
+    def _snapshot_info(self):
+        info = super()._snapshot_info()
+
+        if self.get("asic", "pdk"):
+            info.append(("PDK", self.get("asic", "pdk")))
+
+        # get search ordering
+        flow_name = self.get("option", 'flow')
+        flow = self.get("flowgraph", flow_name, field="schema")
+        to_steps = self.get('option', 'to')
+        prune_nodes = self.get('option', 'prune')
+        run_nodes = RuntimeFlowgraph(flow, to_steps=to_steps, prune_nodes=prune_nodes).get_nodes()
+        nodes = []
+        for node_group in flow.get_execution_order(reverse=True):
+            for node in node_group:
+                if node in run_nodes:
+                    nodes.append(node)
+
+        def format_area(value, unit):
+            prefix = units.get_si_prefix(unit)
+            mm_area = units.convert(value, from_unit=prefix, to_unit='mm^2')
+            if mm_area < 10:
+                return units.format_si(value, 'um') + 'um^2'
+            else:
+                return units.format_si(mm_area, 'mm') + 'mm^2'
+
+        def format_freq(value, unit):
+            value = units.convert(value, from_unit=unit)
+            return units.format_si(value, 'Hz') + 'Hz'
+
+        for text, metric, formatter in (
+                ("Area", "totalarea", format_area),
+                ("Fmax", "fmax", format_freq)):
+            for step, index in nodes:
+                value = self.get("metric", metric, step=step, index=index)
+                if value is None:
+                    continue
+                if formatter:
+                    value = formatter(value, self.get("metric", metric, field="unit"))
+                else:
+                    value = str(value)
+                info.append((text, value))
+                break
+
+        return info
+
 
 class ASICTaskSchema(TaskSchema):
     """
@@ -425,24 +475,24 @@ class ASICTaskSchema(TaskSchema):
     providing easy access to PDK and standard cell library information.
     """
     @property
-    def mainlib(self) -> StdCellLibrarySchema:
+    def mainlib(self) -> StdCellLibrary:
         """The main standard cell library schema object."""
-        mainlib = self.schema().get("asic", "mainlib")
+        mainlib = self.project.get("asic", "mainlib")
         if not mainlib:
             raise ValueError("mainlib has not been defined in [asic,mainlib]")
-        if mainlib not in self.schema().getkeys("library"):
+        if mainlib not in self.project.getkeys("library"):
             raise LookupError(f"{mainlib} has not been loaded")
-        return self.schema().get("library", mainlib, field="schema")
+        return self.project.get("library", mainlib, field="schema")
 
     @property
-    def pdk(self) -> PDKSchema:
+    def pdk(self) -> PDK:
         """The Process Design Kit (PDK) schema object."""
-        pdk = self.schema().get("asic", "pdk")
+        pdk = self.project.get("asic", "pdk")
         if not pdk:
             raise ValueError("pdk has not been defined in [asic,pdk]")
-        if pdk not in self.schema().getkeys("library"):
+        if pdk not in self.project.getkeys("library"):
             raise LookupError(f"{pdk} has not been loaded")
-        return self.schema().get("library", pdk, field="schema")
+        return self.project.get("library", pdk, field="schema")
 
     def set_asic_var(self,
                      key: str,
@@ -579,7 +629,7 @@ class ASICTaskSchema(TaskSchema):
         name = None
         period = None
 
-        for lib, fileset in self.schema().get_filesets():
+        for lib, fileset in self.project.get_filesets():
             for sdc in lib.get_file(fileset=fileset, filetype="sdc"):
                 new_name, new_period = self.__parse_sdc_clock(sdc)
                 if new_period is not None:

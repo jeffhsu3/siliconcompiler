@@ -31,6 +31,16 @@ class OpenROADSTAParameter(OpenROADTask):
                            defvalue="tools/_common/sdc/sc_constraints.sdc",
                            package="siliconcompiler")
 
+    def setup(self):
+        super().setup()
+
+        self.add_required_key("var", "sta_early_timing_derate")
+        self.add_required_key("var", "sta_late_timing_derate")
+        self.add_required_key("var", "sta_top_n_paths")
+        self.add_required_key("var", "sta_define_path_groups")
+        self.add_required_key("var", "sta_unique_path_groups_per_clock")
+        self.add_required_key("var", "opensta_generic_sdc")
+
 
 class OpenROADPSMParameter(OpenROADTask):
     def __init__(self):
@@ -39,6 +49,13 @@ class OpenROADPSMParameter(OpenROADTask):
         self.add_parameter("psm_enable", "bool",
                            "true/false, when true enables IR drop analysis", defvalue=True)
         self.add_parameter("psm_skip_nets", "[str]", "list of nets to skip power grid analysis on")
+
+    def setup(self):
+        super().setup()
+
+        self.add_required_key("var", "psm_enable")
+        if self.get("var", "psm_skip_nets"):
+            self.add_required_key("var", "psm_skip_nets")
 
 
 class OpenROADPPLLayersParameter(OpenROADTask):
@@ -67,10 +84,10 @@ class OpenROADPPLParameter(OpenROADPPLLayersParameter):
         super().setup()
 
         if self.get("var", "ppl_arguments"):
-            self.add_required_tool_key("var", "ppl_arguments")
+            self.add_required_key("var", "ppl_arguments")
 
         if self.get("var", "ppl_constraints"):
-            self.add_required_tool_key("var", "ppl_constraints")
+            self.add_required_key("var", "ppl_constraints")
 
 
 class OpenROADGPLParameter(OpenROADTask):
@@ -102,6 +119,12 @@ class OpenROADGPLParameter(OpenROADTask):
     def setup(self):
         super().setup()
 
+        self.add_required_key("var", "gpl_enable_skip_io")
+        self.add_required_key("var", "gpl_enable_skip_initial_place")
+        self.add_required_key("var", "gpl_uniform_placement_adjustment")
+        self.add_required_key("var", "gpl_timing_driven")
+        self.add_required_key("var", "gpl_routability_driven")
+
         self.set_asic_var("place_density", require=True)
         self.set_asic_var("pad_global_place", check_pdk=False, mainlib_key="global_cell_padding")
 
@@ -116,6 +139,12 @@ class OpenROADRSZDRVParameter(OpenROADTask):
         self.add_parameter("rsz_slew_margin", "float",
                            "specifies the amount of margin to apply to max slew repairs in percent "
                            "(0 - 100)", defvalue=0.0)
+
+    def setup(self):
+        super().setup()
+
+        self.add_required_key("var", "rsz_cap_margin")
+        self.add_required_key("var", "rsz_slew_margin")
 
 
 class OpenROADRSZTimingParameter(OpenROADTask):
@@ -140,6 +169,16 @@ class OpenROADRSZTimingParameter(OpenROADTask):
                            "percentage of paths to attempt to recover power (0 - 100)",
                            defvalue=100)
 
+    def setup(self):
+        super().setup()
+
+        self.add_required_key("var", "rsz_setup_slack_margin")
+        self.add_required_key("var", "rsz_hold_slack_margin")
+        self.add_required_key("var", "rsz_skip_pin_swap")
+        self.add_required_key("var", "rsz_skip_gate_cloning")
+        self.add_required_key("var", "rsz_repair_tns")
+        self.add_required_key("var", "rsz_recover_power")
+
 
 class OpenROADDPLParameter(OpenROADTask):
     def __init__(self):
@@ -154,6 +193,13 @@ class OpenROADDPLParameter(OpenROADTask):
                            "true/false, disallow single site gaps in detail placement",
                            defvalue=False)
 
+    def setup(self):
+        super().setup()
+
+        self.add_required_key("var", "pad_detail_place")
+        self.add_required_key("var", "dpl_max_displacement")
+        self.add_required_key("var", "dpl_disallow_one_site")
+
 
 class OpenROADFillCellsParameter(OpenROADTask):
     def __init__(self):
@@ -162,6 +208,11 @@ class OpenROADFillCellsParameter(OpenROADTask):
         self.add_parameter("dpl_use_decap_fillers", "bool",
                            "true/false, use decap fillers along with non-decap fillers",
                            defvalue=True)
+
+    def setup(self):
+        super().setup()
+
+        self.add_required_key("var", "dpl_use_decap_fillers")
 
 
 class OpenROADDPOParameter(OpenROADTask):
@@ -175,6 +226,12 @@ class OpenROADDPOParameter(OpenROADTask):
                            "maximum cell movement in detailed placement optimization in microns, "
                            "0 will result in the tool default maximum displacement", unit="um",
                            defvalue=(5, 5))
+
+    def setup(self):
+        super().setup()
+
+        self.add_required_key("var", "dpo_enable")
+        self.add_required_key("var", "dpo_max_displacement")
 
 
 class OpenROADCTSParameter(OpenROADTask):
@@ -194,6 +251,15 @@ class OpenROADCTSParameter(OpenROADTask):
                            "perform level balancing in clock tree synthesis", defvalue=True)
         self.add_parameter("cts_obstruction_aware", "bool",
                            "make clock tree synthesis aware of obstructions", defvalue=True)
+
+    def setup(self):
+        super().setup()
+
+        self.add_required_key("var", "cts_distance_between_buffers")
+        self.add_required_key("var", "cts_cluster_diameter")
+        self.add_required_key("var", "cts_cluster_size")
+        self.add_required_key("var", "cts_balance_levels")
+        self.add_required_key("var", "cts_obstruction_aware")
 
 
 class OpenROADGRTGeneralParameter(OpenROADTask):
@@ -215,10 +281,10 @@ class OpenROADGRTGeneralParameter(OpenROADTask):
     def setup(self):
         super().setup()
 
-        min_layer = self.schema().get("asic", "minlayer")
+        min_layer = self.project.get("asic", "minlayer")
         if not min_layer:
             min_layer = self.pdk.get("pdk", "minlayer")
-        max_layer = self.schema().get("asic", "maxlayer")
+        max_layer = self.project.get("asic", "maxlayer")
         if not max_layer:
             max_layer = self.pdk.get("pdk", "maxlayer")
 
@@ -228,11 +294,11 @@ class OpenROADGRTGeneralParameter(OpenROADTask):
         self.set("var", "grt_signal_max_layer", max_layer, clobber=False)
         self.set("var", "grt_clock_max_layer", max_layer, clobber=False)
 
-        self.add_required_tool_key("var", "grt_macro_extension")
-        self.add_required_tool_key("var", "grt_signal_min_layer")
-        self.add_required_tool_key("var", "grt_clock_min_layer")
-        self.add_required_tool_key("var", "grt_signal_max_layer")
-        self.add_required_tool_key("var", "grt_clock_max_layer")
+        self.add_required_key("var", "grt_macro_extension")
+        self.add_required_key("var", "grt_signal_min_layer")
+        self.add_required_key("var", "grt_clock_min_layer")
+        self.add_required_key("var", "grt_signal_max_layer")
+        self.add_required_key("var", "grt_clock_max_layer")
 
 
 class OpenROADGRTParameter(OpenROADGRTGeneralParameter):
@@ -246,6 +312,12 @@ class OpenROADGRTParameter(OpenROADGRTGeneralParameter):
                            "maximum number of iterations to use in global routing when attempting "
                            "to solve overflow", defvalue=100)
 
+    def setup(self):
+        super().setup()
+
+        self.add_required_key("var", "grt_allow_congestion")
+        self.add_required_key("var", "grt_overflow_iter")
+
 
 class OpenROADANTParameter(OpenROADTask):
     def __init__(self):
@@ -256,6 +328,12 @@ class OpenROADANTParameter(OpenROADTask):
                            defvalue=3)
         self.add_parameter("ant_margin", "float", "adds a margin to the antenna ratios (0 - 100)",
                            defvalue=0)
+
+    def setup(self):
+        super().setup()
+
+        self.add_required_key("var", "ant_iterations")
+        self.add_required_key("var", "ant_margin")
 
 
 class _OpenROADDRTCommonParameter(OpenROADTask):
@@ -270,6 +348,16 @@ class _OpenROADDRTCommonParameter(OpenROADTask):
         self.add_parameter("detailed_route_unidirectional_layer", "[str]",
                            "list of layers to treat as unidirectional regardless of what the tech "
                            "lef specifies")
+
+    def setup(self):
+        super().setup()
+
+        if self.get("var", "drt_process_node"):
+            self.add_required_key("var", "drt_process_node")
+        if self.get("var", "detailed_route_default_via"):
+            self.add_required_key("var", "detailed_route_default_via")
+        if self.get("var", "detailed_route_unidirectional_layer"):
+            self.add_required_key("var", "detailed_route_unidirectional_layer")
 
 
 class OpenROADDRTPinAccessParameter(_OpenROADDRTCommonParameter):
@@ -292,6 +380,20 @@ class OpenROADDRTParameter(_OpenROADDRTCommonParameter):
                            "reporting interval in steps for generating a DRC report.", defvalue=5)
         self.add_parameter("drt_end_iteration", "int",
                            "end iteration for detailed routing")
+
+    def setup(self):
+        super().setup()
+
+        self.add_required_key("var", "drt_disable_via_gen")
+        if self.get("var", "drt_via_in_pin_bottom_layer"):
+            self.add_required_key("var", "drt_via_in_pin_bottom_layer")
+        if self.get("var", "drt_via_in_pin_top_layer"):
+            self.add_required_key("var", "drt_via_in_pin_top_layer")
+        if self.get("var", "drt_repair_pdn_vias"):
+            self.add_required_key("var", "drt_repair_pdn_vias")
+        if self.get("var", "drt_end_iteration"):
+            self.add_required_key("var", "drt_end_iteration")
+        self.add_required_key("var", "drt_report_interval")
 
 
 class APRTask(OpenROADTask):
@@ -337,8 +439,14 @@ class APRTask(OpenROADTask):
                            "used to indicate if global routing information should be loaded",
                            defvalue=False)
 
-        self.add_parameter("global_connect", "[file]",
-                           "list of files to use for specifying global connections")
+        self.add_parameter("global_connect_fileset", "[(str,str)]",
+                           "list of libraries and filesets to generate connects from")
+
+    def add_openroad_globalconnectfileset(self, library, fileset, clobber=False):
+        if clobber:
+            self.set("var", "global_connect_fileset", (library, fileset))
+        else:
+            self.add("var", "global_connect_fileset", (library, fileset))
 
     def setup(self):
         super().setup()
@@ -351,37 +459,60 @@ class APRTask(OpenROADTask):
         # Set power corner
         self.set("var", "power_corner", self._get_constraint_by_check("power"), clobber=False)
 
-        self.add_required_tool_key("var", "ord_enable_images")
-        self.add_required_tool_key("var", "ord_heatmap_bins")
-        self.add_required_tool_key("var", "load_grt_setup")
+        if self.get("var", "reports"):
+            self.add_required_key("var", "reports")
+        if self.get("var", "skip_reports"):
+            self.add_required_key("var", "skip_reports")
+
+        self.add_required_key("var", "ord_enable_images")
+        self.add_required_key("var", "ord_heatmap_bins")
+        self.add_required_key("var", "load_grt_setup")
+
+        if not self.get("var", "global_connect_fileset"):
+            self.__import_globalconnect_filesets()
+
+        if self.get("var", "global_connect_fileset"):
+            self.add_required_key("var", "global_connect_fileset")
+            for lib, fileset in self.get("var", "global_connect_fileset"):
+                self.add_required_key("library", lib, "fileset", fileset, "file", "tcl")
+
+        libcorners = set()
+        for scenario in self.project.get_timingconstraints().get_scenario().values():
+            libcorners.update(scenario.get_libcorner(self.step, self.index))
+        delay_model = self.project.get("asic", "delaymodel")
+        for asiclib in self.project.get("asic", "asiclib"):
+            lib = self.project.get("library", asiclib, field="schema")
+            for corner in libcorners:
+                if not lib.valid("asic", "libcornerfileset", corner, delay_model):
+                    continue
+                self.add_required_key(lib, "asic", "libcornerfileset", corner, delay_model)
+                for fileset in lib.get("asic", "libcornerfileset", corner, delay_model):
+                    self.add_required_key(lib, "fileset", fileset, "file", "liberty")
 
     def pre_process(self):
         super().pre_process()
-
         self._build_pex_estimation_file()
 
-        # Setup global connect scripts
-        if self.get("var", "global_connect"):
-            # Already set so do nothing
-            return
-
-        for lib in self.schema().get("asic", "asiclib"):
-            libobj = self.schema().get("library", lib, field="schema")
-            if libobj.valid("tool", "openroad", "global_connect"):
-                self.add("var", "global_connect",
-                         libobj.find_files("tool", "openroad", "global_connect"))
+    def __import_globalconnect_filesets(self):
+        for lib in self.project.get("asic", "asiclib"):
+            libobj = self.project.get("library", lib, field="schema")
+            if libobj.valid("tool", "openroad", "global_connect_fileset"):
+                for fileset in libobj.get("tool", "openroad", "global_connect_fileset"):
+                    self.add_openroad_globalconnectfileset(lib, fileset)
 
     def _set_reports(self, task_reports: List[str]):
         self.set("var", "reports", set(task_reports).difference(self.get("var", "skip_reports")))
 
         if "power" in self.get("var", "reports"):
-            self.add_required_tool_key("var", "power_corner")
+            self.add_required_key("var", "power_corner")
 
     def _add_pnr_inputs(self):
         if f"{self.design_topmodule}.sdc" in self.get_files_from_input_nodes():
             self.add_input_file(ext="sdc")
         else:
-            pass
+            for lib, fileset in self.project.get_filesets():
+                if lib.has_file(fileset=fileset, filetype="sdc"):
+                    self.add_required_key(lib, "fileset", fileset, "file", "sdc")
 
         if f"{self.design_topmodule}.odb" in self.get_files_from_input_nodes():
             self.add_input_file(ext="odb")
@@ -398,22 +529,22 @@ class APRTask(OpenROADTask):
 
     def _get_pex_mapping(self):
         corners = {}
-        for constraint in self.schema().getkeys('constraint', 'timing'):
-            pexcorner = self.schema().get('constraint', 'timing', constraint, 'pexcorner',
-                                          step=self.step, index=self.index)
+        for constraint in self.project.getkeys('constraint', 'timing'):
+            pexcorner = self.project.get('constraint', 'timing', constraint, 'pexcorner',
+                                         step=self.step, index=self.index)
             if pexcorner:
                 corners[constraint] = pexcorner
 
         return corners
 
     def _get_constraint_by_check(self, check: str) -> str:
-        for constraint in self.schema().getkeys('constraint', 'timing'):
-            if check in self.schema().get('constraint', 'timing', constraint, 'check',
-                                          step=self.step, index=self.index):
+        for constraint in self.project.getkeys('constraint', 'timing'):
+            if check in self.project.get('constraint', 'timing', constraint, 'check',
+                                         step=self.step, index=self.index):
                 return constraint
 
         # if not specified, just pick the first constraint available
-        return self.schema().getkeys('constraint', 'timing')[0]
+        return self.project.getkeys('constraint', 'timing')[0]
 
     def _build_pex_estimation_file(self):
         corners = self._get_pex_mapping()
@@ -519,9 +650,9 @@ class APRTask(OpenROADTask):
             ],
             "peakpower": [
                 *[f"power/{corner}.rpt"
-                  for corner in self.schema().getkeys('constraint', 'timing')],
+                  for corner in self.project.getkeys('constraint', 'timing')],
                 *[f"images/heatmap/power_density/{corner}.png"
-                    for corner in self.schema().getkeys('constraint', 'timing')]
+                    for corner in self.project.getkeys('constraint', 'timing')]
             ],
             "drvs": [
                 "timing/drv_violators.rpt",
@@ -660,21 +791,21 @@ class APRTask(OpenROADTask):
             # setup wns and hold wns can be computed from setup slack and hold slack
             if 'sc__metric__timing__setup__ws' in metrics and \
                     has_timing and \
-                    self.schema("metric").get('setupslack', step=self.step, index=self.index) \
+                    self.schema_metric.get('setupslack', step=self.step, index=self.index) \
                     is not None:
-                wns = min(0.0, self.schema("metric").get('setupslack',
-                                                         step=self.step, index=self.index))
-                wns_units = self.schema("metric").get('setupslack', field='unit')
+                wns = min(0.0, self.schema_metric.get('setupslack',
+                                                      step=self.step, index=self.index))
+                wns_units = self.schema_metric.get('setupslack', field='unit')
                 self.record_metric("setupwns", wns, source_file=get_metric_sources('setupslack'),
                                    source_unit=wns_units)
 
             if 'sc__metric__timing__hold__ws' in metrics and \
                     has_timing and \
-                    self.schema("metric").get('holdslack', step=self.step, index=self.index) \
+                    self.schema_metric.get('holdslack', step=self.step, index=self.index) \
                     is not None:
-                wns = min(0.0, self.schema("metric").get('holdslack',
-                                                         step=self.step, index=self.index))
-                wns_units = self.schema("metric").get('holdslack', field='unit')
+                wns = min(0.0, self.schema_metric.get('holdslack',
+                                                      step=self.step, index=self.index))
+                wns_units = self.schema_metric.get('holdslack', field='unit')
                 self.record_metric("holdwns", wns, source_file=get_metric_sources('holdslack'),
                                    source_unit=wns_units)
 

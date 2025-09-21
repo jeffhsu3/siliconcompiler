@@ -1,7 +1,8 @@
 from docutils import nodes
 import sphinx.addnodes
 
-from siliconcompiler import Schema
+from docutils.statemachine import ViewList
+from sphinx.util.nodes import nested_parse_with_titles
 
 
 # Docutils helpers
@@ -52,16 +53,15 @@ def build_table(items, colwidths=None, colspec=None):
     return return_nodes
 
 
-def build_section(text, key):
-    sec = nodes.section(ids=[get_ref_id(key)])
+def build_section(text, ref):
+    sec = nodes.section(ids=[nodes.make_id(ref)])
     sec += nodes.title(text=text)
     return sec
 
 
-def build_section_with_target(text, key, ctx):
-    id = get_ref_id(key)
-    target = nodes.target('', '', ids=[id], names=[id])
-    sec = nodes.section(ids=[id])
+def build_section_with_target(text, ref, ctx):
+    target = nodes.target('', '', ids=[nodes.make_id(ref)], names=[nodes.make_id(ref)])
+    sec = nodes.section(ids=[nodes.make_id(ref)])
     sec += nodes.title(text=text)
 
     # We don't need to add target node to hierarchy, just need to call this
@@ -71,8 +71,14 @@ def build_section_with_target(text, key, ctx):
     return sec
 
 
-def get_ref_id(key):
-    return nodes.make_id(key + "-ref")
+def get_key_ref(key_path, ref=None):
+    if not ref:
+        ref = "Project"
+    elif isinstance(ref, str):
+        ref = ref
+    else:
+        ref = ref.__class__.__name__
+    return f'param-{ref}-{"-".join([key for key in key_path if key != "default"])}'
 
 
 def para(text):
@@ -125,9 +131,39 @@ def build_list(items, enumerated=False):
 
 def keypath(key_path, refdoc, key_text=None):
     '''Helper function for displaying Schema keypaths.'''
+    from siliconcompiler import Project, ASICProject, FPGAProject, LintProject, SimProject
+    from siliconcompiler import PDK, StdCellLibrary, Schematic, Design
+
     text_parts = []
     key_parts = []
-    schema = Schema()
+
+    if key_path[0][0].upper() == key_path[0][0]:
+        schema_name = key_path[0]
+        key_path = key_path[1:]
+        if schema_name == "ASICProject":
+            schema = ASICProject()
+        elif schema_name == "FPGAProject":
+            schema = FPGAProject()
+        elif schema_name == "LintProject":
+            schema = LintProject()
+        elif schema_name == "SimProject":
+            schema = SimProject()
+        elif schema_name == "Project":
+            schema = Project()
+        elif schema_name == "PDK":
+            schema = PDK()
+        elif schema_name == "StdCellLibrary":
+            schema = StdCellLibrary()
+        elif schema_name == "Schematic":
+            schema = Schematic()
+        elif schema_name == "Design":
+            schema = Design()
+        else:
+            raise ValueError(f"{schema_name} not supported")
+    else:
+        schema = Project()
+
+    valid = True
     for key in key_path:
         if schema.valid(*key_parts, "default", default_valid=True):
             key_parts.append("default")
@@ -136,30 +172,128 @@ def keypath(key_path, refdoc, key_text=None):
                 text_parts.append(key)
             else:
                 # Fully-qualified
-                text_parts.append(f"'{key}'")
+                text_parts.append(key)
         else:
             key_parts.append(key)
-            text_parts.append(f"'{key}'")
+            text_parts.append(key)
 
-        if not schema.valid(*key_parts, default_valid=True):
-            raise ValueError(f'Invalid keypath {key_path}')
+        if valid and not schema.valid(*key_parts, default_valid=True):
+            print(f"WARNING: Invalid keypath {key_path}")
+            valid = False
+            # raise ValueError(f'Invalid keypath {key_path}')
 
-    if not schema.valid(*key_parts, default_valid=True, check_complete=True):
+    if valid and not schema.valid(*key_parts, default_valid=True, check_complete=True):
         # Not leaf
         text_parts.append('...')
 
     if key_text:
         text_parts = key_text
-    text = f"[{', '.join(text_parts)}]"
-    refid = get_ref_id('param-' + '-'.join([key for key in key_parts if key != "default"]))
-
+    text = f"[{','.join(text_parts)}]"
     opt = {'refdoc': refdoc,
            'refdomain': 'sc',
            'reftype': 'ref',
            'refexplicit': True,
            'refwarn': True}
     refnode = sphinx.addnodes.pending_xref('keypath', **opt)
-    refnode['reftarget'] = refid
+    refnode['reftarget'] = nodes.make_id(get_key_ref(key_parts, ref=schema))
     refnode += code(text)
 
     return refnode
+
+
+def parse_rst(state, content, dest):
+    rst = ViewList()
+    # use fake filename 'inline' for error # reporting
+    for i, line in enumerate(content.splitlines()):
+        rst.append(line, 'inline', i)
+
+    nested_parse_with_titles(state, rst, dest)
+
+
+def build_schema_value_table(params, refdoc, keypath_prefix=None, trim_prefix=None):
+    '''Helper function for displaying values set in schema as a docutils table.'''
+    table = [[strong('Keypath'), strong('Type'), strong('Value')]]
+
+    if not keypath_prefix:
+        keypath_prefix = []
+
+    def format_value(is_list, is_set, value):
+        if is_list or is_set:
+            value = list(value)
+            if is_set:
+                value = sorted(value)
+            if len(value) > 1:
+                val_node = build_list([code(v) for v in value])
+            elif len(value) > 0:
+                val_node = code(value[0])
+            else:
+                val_node = para('')
+        else:
+            val_node = code(value)
+        return val_node
+
+    def format_single_value_file(value, package):
+        val_list = [code(value)]
+        if package:
+            val_list.append(nodes.inline(text=', '))
+            val_list.append(code(package))
+        return nodes.paragraph('', '', *val_list)
+
+    def format_value_file(is_list, value, package):
+        if is_list:
+            if len(value) > 1:
+                val_node = build_list([
+                    format_single_value_file(v, p) for v, p in zip(value, package)])
+            elif len(value) > 0:
+                return format_single_value_file(value[0], package[0])
+            else:
+                val_node = para('')
+        else:
+            val_node = format_single_value_file(value, package)
+        return val_node
+
+    for key, param in sorted(params.items(), key=lambda d: d[0]):
+        values = param.getvalues(return_defvalue=True)
+        if values:
+            # take first of multiple possible values
+            value, step, index = values[0]
+            if value is None or value == [] or value == set():
+                # Dont show empty
+                continue
+
+            val_type = param.get(field='type')
+            is_filedir = 'file' in val_type or 'dir' in val_type
+            if is_filedir:
+                val_node = format_value_file(val_type.startswith('['), value,
+                                             param.get(field='package',
+                                                       step=step, index=index))
+            else:
+                val_node = format_value(val_type.startswith('['), val_type.startswith('{'), value)
+
+            if "<" in val_type:
+                if val_type.startswith('['):
+                    val_type = "[enum]"
+                elif val_type.startswith('{'):
+                    val_type = "{enum}"
+                else:
+                    val_type = "enum"
+
+            # HTML builder fails if we don't make a text node the parent of the
+            # reference node returned by keypath()
+            p = nodes.paragraph()
+            if trim_prefix:
+                full_key = [*keypath_prefix, *key]
+                key_text = ["...", *full_key[len(trim_prefix):]]
+                p += keypath(full_key, refdoc, key_text)
+            else:
+                p += keypath([*keypath_prefix, *key], refdoc)
+            table.append([p, code(val_type), val_node])
+
+    if len(table) > 1:
+        # This colspec creates two columns of equal width that fill the entire
+        # page, and adds line breaks if table cell contents are longer than one
+        # line. "\X" is defined by Sphinx, otherwise this is standard LaTeX.
+        colspec = r'{|\X{2}{5}|\X{1}{5}|\X{2}{5}|}'
+        return build_table(table, colspec=colspec)
+    else:
+        return None

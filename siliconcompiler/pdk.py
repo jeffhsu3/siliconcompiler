@@ -1,12 +1,17 @@
 import math
 
-from siliconcompiler.schema import EditableSchema, Parameter, Scope
+from typing import Tuple
+
+from siliconcompiler.schema import EditableSchema, Parameter, Scope, BaseSchema
 from siliconcompiler.schema.utils import trim
 
-from siliconcompiler import ToolLibrarySchema
+from siliconcompiler.library import ToolLibrarySchema
+from siliconcompiler.schema_support.pathschema import PathSchema
+from siliconcompiler.schema_support.filesetschema import FileSetSchema
+from siliconcompiler.schema_support.packageschema import PackageSchema
 
 
-class PDKSchema(ToolLibrarySchema):
+class PDK(ToolLibrarySchema):
     """
     A schema for managing and validating Process Design Kit (PDK) configurations.
 
@@ -18,7 +23,7 @@ class PDKSchema(ToolLibrarySchema):
     """
     def __init__(self, name: str = None):
         """
-        Initializes a PDKSchema object.
+        Initializes a PDK object.
 
         Args:
             name (str, optional): The name of the PDK. Defaults to None.
@@ -572,7 +577,7 @@ class PDKSchema(ToolLibrarySchema):
         Returns the meta data for getdict
         """
 
-        return PDKSchema.__name__
+        return PDK.__name__
 
     def calc_yield(self, diearea: float, model: str = 'poisson') -> float:
         '''Calculates raw die yield.
@@ -701,3 +706,46 @@ class PDKSchema(ToolLibrarySchema):
                     dies = dies + 1
 
         return dies
+
+    def _generate_doc(self, doc,
+                      ref_root: str = "",
+                      key_offset: Tuple[str] = None,
+                      detailed: bool = True):
+        from .schema.docs.utils import build_section
+        docs = []
+
+        if not key_offset:
+            key_offset = ["PDK"]
+
+        # Show dataroot
+        dataroot = PathSchema._generate_doc(self, doc, ref_root)
+        if dataroot:
+            docs.append(dataroot)
+
+        # Show package information
+        package = PackageSchema._generate_doc(self, doc, ref_root=ref_root, key_offset=key_offset)
+        if package:
+            docs.append(package)
+
+        # Show filesets
+        fileset = FileSetSchema._generate_doc(self, doc, ref_root=ref_root, key_offset=key_offset)
+        if fileset:
+            docs.append(fileset)
+
+        # Show PDK
+        pdk_sec = build_section("PDK", f"{ref_root}-pdkinfo")
+        pdk_sec += BaseSchema._generate_doc(self.get("pdk", field="schema"),
+                                            doc,
+                                            ref_root=f"{ref_root}-pdkinfo",
+                                            key_offset=key_offset,
+                                            detailed=False)
+        docs.append(pdk_sec)
+
+        # Show tool information
+        tools_sec = ToolLibrarySchema._generate_doc(self, doc,
+                                                    ref_root=ref_root,
+                                                    key_offset=key_offset)
+        if tools_sec:
+            docs.append(tools_sec)
+
+        return docs

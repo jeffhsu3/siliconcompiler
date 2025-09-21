@@ -1,6 +1,7 @@
 import os
 import pytest
 import json
+import multiprocessing
 import platform
 import shutil
 import socket
@@ -11,15 +12,18 @@ import time
 import os.path
 
 import siliconcompiler
-from siliconcompiler import utils, ASICProject, DesignSchema
+
+from pathlib import Path
+from pyvirtualdisplay import Display
+from unittest.mock import patch
+
+from siliconcompiler import utils, ASICProject, Design
 from siliconcompiler.tools.openroad._apr import APRTask
 from siliconcompiler.flows.asicflow import ASICFlow
 from siliconcompiler.targets import freepdk45_demo
-from pathlib import Path
 from siliconcompiler.scheduler import TaskScheduler
 from siliconcompiler.utils.multiprocessing import _ManagerSingleton, MPManager
-from unittest.mock import patch
-from pyvirtualdisplay import Display
+from siliconcompiler.apps import sc_server
 
 
 def pytest_addoption(parser):
@@ -176,7 +180,7 @@ def datadir(request):
 
 @pytest.fixture
 def heartbeat_design(examples_root):
-    design = DesignSchema("heartbeat")
+    design = Design("heartbeat")
     design.set_dataroot("heartbeat-pytest-example", os.path.join(examples_root, 'heartbeat'))
     with design.active_fileset("rtl"), design.active_dataroot("heartbeat-pytest-example"):
         design.set_topmodule("heartbeat")
@@ -207,7 +211,7 @@ def asic_heartbeat(heartbeat_design):
 
 @pytest.fixture
 def gcd_design(examples_root):
-    design = DesignSchema("gcd")
+    design = Design("gcd")
     design.set_dataroot("gcd-pytest-example", os.path.join(examples_root, 'gcd'))
     with design.active_fileset("rtl"), design.active_dataroot("gcd-pytest-example"):
         design.set_topmodule("gcd")
@@ -260,7 +264,7 @@ def scserver_users(scserver_nfs_path):
 
 
 @pytest.fixture
-def scserver(scserver_nfs_path, unused_tcp_port, request, wait_for_port):
+def scserver(scserver_nfs_path, unused_tcp_port, request, wait_for_port, monkeypatch):
     srv_proc = None
 
     def start_server(cluster='local', auth=False):
@@ -275,7 +279,10 @@ def scserver(scserver_nfs_path, unused_tcp_port, request, wait_for_port):
         if auth:
             args.append('-auth')
 
-        srv_proc = subprocess.Popen(['sc-server', *args])  # noqa: F841
+        monkeypatch.setattr(sys, "argv", ["sc-server", *args])
+
+        srv_proc = multiprocessing.Process(target=sc_server.main)
+        srv_proc.start()
 
         # Wait for server to become available
         wait_for_port(unused_tcp_port)

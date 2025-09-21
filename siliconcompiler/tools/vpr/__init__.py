@@ -25,19 +25,19 @@ import os.path
 
 from siliconcompiler import sc_open
 
-from siliconcompiler import TaskSchema
+from siliconcompiler.tool import TaskSchema
 
 from typing import List, Union
 
-from siliconcompiler import FPGASchema
+from siliconcompiler import FPGA
 
 
-class VPRFPGA(FPGASchema):
+class VPRFPGA(FPGA):
     """
     Schema for defining library parameters specifically for the
     VPR (Verilog Place and Route) tool.
 
-    This class extends the base FPGASchema to manage various settings
+    This class extends the base FPGA to manage various settings
     related to VPR, such as device information, channel width, resource types,
     and input file paths for the architecture and routing graph.
     """
@@ -65,6 +65,12 @@ class VPRFPGA(FPGASchema):
 
         self.define_tool_parameter("vpr", "clock_model", "<ideal,route,dedicated_network>",
                                    "The clock modeling strategy to be used.")
+
+        self.define_tool_parameter("vpr",
+                                   "router_lookahead",
+                                   "<classic,map,compressed_map,extended_map,simple>",
+                                   "The lookahead the router will use to estimate cost.",
+                                   defvalue="map")
 
     def set_vpr_devicecode(self, name: str):
         """
@@ -137,9 +143,7 @@ class VPRFPGA(FPGASchema):
             file (str): The path to the architecture file.
             dataroot (str, optional): The data root directory. Defaults to the active package.
         """
-        if not dataroot:
-            dataroot = self._get_active("package")
-        with self.active_dataroot(dataroot):
+        with self.active_dataroot(self._get_active_dataroot(dataroot)):
             return self.set("tool", "vpr", "archfile", file)
 
     def set_vpr_graphfile(self, file: str, dataroot: str = None):
@@ -150,9 +154,7 @@ class VPRFPGA(FPGASchema):
             file (str): The path to the routing graph file.
             dataroot (str, optional): The data root directory. Defaults to the active package.
         """
-        if not dataroot:
-            dataroot = self._get_active("package")
-        with self.active_dataroot(dataroot):
+        with self.active_dataroot(self._get_active_dataroot(dataroot)):
             return self.set("tool", "vpr", "graphfile", file)
 
     def set_vpr_constraintsmap(self, file: str, dataroot: str = None):
@@ -163,9 +165,7 @@ class VPRFPGA(FPGASchema):
             file (str): The path to the constraints map file.
             dataroot (str, optional): The data root directory. Defaults to the active package.
         """
-        if not dataroot:
-            dataroot = self._get_active("package")
-        with self.active_dataroot(dataroot):
+        with self.active_dataroot(self._get_active_dataroot(dataroot)):
             return self.set("tool", "vpr", "constraintsmap", file)
 
     def set_vpr_clockmodel(self, model: str):
@@ -177,6 +177,18 @@ class VPRFPGA(FPGASchema):
                          (e.g., 'ideal', 'route', or 'dedicated_network').
         """
         return self.set("tool", "vpr", "clock_model", model)
+
+    def set_vpr_router_lookahead(self, lookahead: str):
+        """
+        Sets the lookahead that the router will use to estimate the cost of
+        paths in the routing graph. This is also sometimes used in placement
+        to estimate costs.
+
+        Args:
+            lookahead (str): The name of the lookahead to use
+                             (e.g., 'map', 'classic', ...).
+        """
+        return self.set("tool", "vpr", "router_lookahead", lookahead)
 
 
 class VPRTask(TaskSchema):
@@ -194,6 +206,9 @@ class VPRTask(TaskSchema):
                            "level of detail for timing reports: vpr --timing_report_detail",
                            defvalue="aggregated")
         self.add_parameter("enable_timing_analysis", "bool", "enable timing analysis")
+        self.add_parameter("router_lookahead",
+                           "<classic,map,compressed_map,extended_map,simple>",
+                           "The lookahead the router will use to estimate cost.")
 
     def tool(self):
         return "vpr"
@@ -219,11 +234,16 @@ class VPRTask(TaskSchema):
 
         # Grab the revision. Which will be of the form:
         #       v8.0.0-7887-gc4156f225
+        #               or
+        #       v8.0.0-7887-gc4156f225-dirty (if modified locally)
         revision = stdout.split()[8]
 
         # VTR infrequently makes even minor releases, use the number of commits
         # since the last release of VTR as another part of the release segment.
         pieces = revision.split("-")
+        if len(pieces) == 4:
+            # Strip off the hash and "dirty" if they exists.
+            return "-".join(pieces[:-2])
         if len(pieces) == 3:
             # Strip off the hash if it exists.
             return "-".join(pieces[:-1])
@@ -244,19 +264,21 @@ class VPRTask(TaskSchema):
 
         self.set_threads()
 
-        self.add_required_tool_key("var", "enable_images")
-        self.add_required_tool_key("var", "timing_paths")
-        self.add_required_tool_key("var", "timing_report_type")
-        self.add_required_tool_key("var", "enable_timing_analysis")
-        for lib, fileset in self.schema().get_filesets():
-            if lib.get_file(fileset=fileset, filetype="sdc"):
+        self.add_required_key("var", "enable_images")
+        self.add_required_key("var", "timing_paths")
+        self.add_required_key("var", "timing_report_type")
+        self.add_required_key("var", "enable_timing_analysis")
+        for lib, fileset in self.project.get_filesets():
+            if lib.has_file(fileset=fileset, filetype="sdc"):
                 self.add_required_key(lib, "fileset", fileset, "file", "sdc")
                 self.set("var", "enable_timing_analysis", True)
+        if self.get("var", "router_lookahead"):
+            self.add_required_key("var", "router_lookahead")
 
     def runtime_options(self):
         options = super().runtime_options()
 
-        fpga = self.schema().get("library", self.schema().get("fpga", "device"), field="schema")
+        fpga = self.project.get("library", self.project.get("fpga", "device"), field="schema")
 
         options.extend(["--device", fpga.get("tool", "vpr", "devicecode")])
 
@@ -296,8 +318,18 @@ class VPRTask(TaskSchema):
         if fpga.get("tool", "vpr", "clock_model") == 'dedicated_network':
             options.append('--two_stage_clock_routing')
 
+        # Set the router lookahead.
+        if self.get("var", "router_lookahead"):
+            # Use the router lookahead set on the tool if provided.
+            options.extend(['--router_lookahead',
+                            self.get("var", "router_lookahead")])
+        else:
+            # Use the router lookahead set on the FPGA.
+            options.extend(['--router_lookahead',
+                            fpga.get("tool", "vpr", "router_lookahead")])
+
         sdc_file = None
-        for lib, fileset in self.schema().get_filesets():
+        for lib, fileset in self.project.get_filesets():
             files = lib.get_file(fileset=fileset, filetype="sdc")
             if files:
                 sdc_file = files[0]
@@ -352,17 +384,17 @@ class VPRTask(TaskSchema):
         for report in glob.glob("*.rpt"):
             shutil.move(report, 'reports')
 
-        fpga = self.schema().get("fpga", "device")
+        fpga = self.project.get("fpga", "device")
 
         dff_cells = []
-        if self.schema().valid("library", fpga, "tool", "yosys", "registers"):
-            dff_cells = self.schema().get("library", fpga, "tool", "yosys", "registers")
+        if self.project.valid("library", fpga, "tool", "yosys", "registers"):
+            dff_cells = self.project.get("library", fpga, "tool", "yosys", "registers")
         brams_cells = []
-        if self.schema().valid("library", fpga, "tool", "yosys", "brams"):
-            brams_cells = self.schema().get("library", fpga, "tool", "yosys", "brams")
+        if self.project.valid("library", fpga, "tool", "yosys", "brams"):
+            brams_cells = self.project.get("library", fpga, "tool", "yosys", "brams")
         dsps_cells = []
-        if self.schema().valid("library", fpga, "tool", "yosys", "dsps"):
-            dsps_cells = self.schema().get("library", fpga, "tool", "yosys", "dsps")
+        if self.project.valid("library", fpga, "tool", "yosys", "dsps"):
+            dsps_cells = self.project.get("library", fpga, "tool", "yosys", "dsps")
 
         stat_extract = re.compile(r'  \s*(.*)\s*:\s*([0-9]+)')
         lut_match = re.compile(r'([0-9]+)-LUT')
@@ -420,7 +452,7 @@ class VPRTask(TaskSchema):
                 data = json.load(f)
 
                 if "num_nets" in data and \
-                        self.schema("metric").get('nets', step=self.step, index=self.index) is None:
+                        self.schema_metric.get('nets', step=self.step, index=self.index) is None:
                     self.record_metric("nets", int(data["num_nets"]), VPRTask.__block_file)
 
                 io = 0

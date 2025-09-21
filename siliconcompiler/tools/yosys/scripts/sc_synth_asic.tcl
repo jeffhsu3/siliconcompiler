@@ -37,8 +37,9 @@ set sc_abc_constraints [sc_cfg_tool_task_get var abc_constraint_file]
 
 set sc_blackboxes []
 foreach lib $sc_logiclibs {
-    if { [sc_cfg_exists library $lib output blackbox verilog] } {
-        foreach lib_f [sc_cfg_get library $lib output blackbox verilog] {
+    if { [sc_cfg_exists library $lib tool yosys blackbox_fileset] } {
+        set lib_fileset [sc_cfg_get library $lib tool yosys blackbox_fileset]
+        foreach lib_f [sc_cfg_get_fileset $lib $lib_fileset verilog] {
             lappend sc_blackboxes $lib_f
         }
     }
@@ -66,18 +67,6 @@ foreach lib_file $sc_libraries {
 foreach bb_file $sc_blackboxes {
     yosys log "Reading blackbox model file: $bb_file"
     yosys read_verilog -setattr blackbox -sv $bb_file
-}
-
-# Before working on the design, we mask out any module supplied via
-# `blackbox_modules`. This allows synthesis of parts of the design without having
-# to modify the input RTL.
-if { [sc_cfg_tool_task_exists var blackbox_modules] } {
-    foreach bb [sc_cfg_tool_task_get var blackbox_modules] {
-        foreach module [get_modules $bb] {
-            yosys log "Blackboxing module: $module"
-            yosys blackbox $module
-        }
-    }
 }
 
 ########################################################
@@ -447,15 +436,16 @@ if { [file exists $sc_abc_constraints] } {
 if { $script != "" } {
     lappend abc_args "-script" $script
 }
-foreach lib_file $sc_libraries {
-    lappend abc_args "-liberty" $lib_file
+# Synthesize to main library only
+foreach lib_file [sc_cfg_tool_task_get var synthesis_libraries] {
+    if { [string first "sc_${sc_mainlib}_" [lindex [file split $lib_file] end]] == 0 } {
+        lappend abc_args "-liberty" $lib_file
+    }
 }
 set abc_dont_use []
-foreach lib $sc_logiclibs {
-    foreach group "dontuse hold clkbuf clkgate clklogic" {
-        foreach cell [sc_cfg_get library $lib asic cells $group] {
-            lappend abc_dont_use -dont_use $cell
-        }
+foreach group "dontuse hold clkbuf clkgate clklogic" {
+    foreach cell [sc_cfg_get library $sc_mainlib asic cells $group] {
+        lappend abc_dont_use -dont_use $cell
     }
 }
 

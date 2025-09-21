@@ -16,7 +16,7 @@ from datetime import datetime
 
 from siliconcompiler import Project
 from siliconcompiler import utils
-from siliconcompiler.record import RecordTime
+from siliconcompiler.schema_support.record import RecordTime
 
 
 def make_bytes(data):
@@ -41,11 +41,10 @@ def wrap_text(data):
 
 ###########################
 def main():
-    progname = "summarize"
+    progname = "replay"
     description = """
     ------------------------------------------------------------
-    Utility script to print job record information from a manifest
-    needed to replay that manifest.
+    Utility script to generate a replay script from a previous run.
     ------------------------------------------------------------
     """
 

@@ -1,7 +1,7 @@
 {
   "openroad": {
     "git-url": "https://github.com/The-OpenROAD-Project/OpenROAD.git",
-    "git-commit": "6a23a4b44f9e8b7a8ca3d700bab0e9e87b2dcc57",
+    "git-commit": "9dcbceb00bbba1050a76e86b3b71be95652975b9",
     "docker-cmds": [
       "# Remove OR-Tools files",
       "RUN rm -f $SC_PREFIX/Makefile $SC_PREFIX/README.md",
@@ -12,12 +12,12 @@
   },
   "surelog": {
     "git-url": "https://github.com/chipsalliance/Surelog.git",
-    "git-commit": "v1.84",
+    "git-commit": "v1.86",
     "auto-update": true
   },
   "opensta": {
     "git-url": "https://github.com/parallaxsw/OpenSTA.git",
-    "git-commit": "255988633fe90820536b6542a6b608db4d9648bc",
+    "git-commit": "c020334e07551b97f01101be17e3b0c441bce2c9",
     "auto-update": true
   },
   "netgen": {
@@ -41,7 +41,7 @@
     "auto-update": false
   },
   "klayout": {
-    "version": "0.30.2",
+    "version": "0.30.4",
     "git-url": "https://github.com/KLayout/klayout.git",
     "auto-update": true,
     "run-version": "source version.sh && echo $KLAYOUT_VERSION",
@@ -76,7 +76,7 @@
   },
   "vpr": {
     "git-url": "https://github.com/verilog-to-routing/vtr-verilog-to-routing.git",
-    "git-commit": "4bb340af8243b95efdea493d4cb58aed1099151f",
+    "git-commit": "7f476dbf780b845d07a7642366552e799df02c93",
     "auto-update": false
   },
   "icepack": {
@@ -101,7 +101,7 @@
   },
   "yosys": {
     "git-url": "https://github.com/YosysHQ/yosys.git",
-    "git-commit": "v0.56",
+    "git-commit": "v0.57",
     "version-prefix": "",
     "auto-update": true
   },
@@ -145,7 +145,7 @@
   },
   "yosys-slang": {
     "git-url": "https://github.com/povik/yosys-slang.git",
-    "git-commit": "fd77b320b865ee75560edab4258ced1e1dd47ecf",
+    "git-commit": "c962a6e68f8cff48bf5d4d84c371eee883567803",
     "docker-depends": "yosys",
     "auto-update": true
   },

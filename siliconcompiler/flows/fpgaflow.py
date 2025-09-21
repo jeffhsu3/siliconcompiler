@@ -2,6 +2,7 @@ from siliconcompiler.tools.yosys import syn_fpga as yosys_syn
 from siliconcompiler.tools.vpr import place as vpr_place
 from siliconcompiler.tools.vpr import route as vpr_route
 from siliconcompiler.tools.genfasm import bitstream as genfasm_bitstream
+from siliconcompiler.tools.opensta import timing
 
 from siliconcompiler.tools.vivado import syn_fpga as vivado_syn
 from siliconcompiler.tools.vivado import place as vivado_place
@@ -11,17 +12,18 @@ from siliconcompiler.tools.vivado import bitstream as vivado_bitstream
 from siliconcompiler.tools.nextpnr import apr as nextpnr_apr
 
 
-from siliconcompiler import FlowgraphSchema
+from siliconcompiler import Flowgraph
 from siliconcompiler.tools.slang import elaborate
 
 
-class FPGAXilinxFlow(FlowgraphSchema):
+class FPGAXilinxFlow(Flowgraph):
     '''An FPGA compilation flow targeting Xilinx devices using Vivado.
 
     This flow uses the commercial Vivado toolchain for synthesis, placement,
     routing, and bitstream generation.
 
     The flow consists of the following steps:
+
     * **syn_fpga**: Synthesize RTL into a device-specific netlist.
     * **place**: Place the synthesized netlist onto the FPGA fabric.
     * **route**: Route the connections between placed components.
@@ -47,13 +49,14 @@ class FPGAXilinxFlow(FlowgraphSchema):
         self.edge("route", "bitstream")
 
 
-class FPGANextPNRFlow(FlowgraphSchema):
+class FPGANextPNRFlow(Flowgraph):
     '''An open-source FPGA flow using Yosys and NextPNR.
 
     This flow is tailored for FPGAs supported by the NextPNR tool, which
     handles placement, routing, and bitstream generation in a single step.
 
     The flow consists of the following steps:
+
     * **syn_fpga**: Synthesize RTL into a device-specific netlist using Yosys.
     * **apr**: Perform automatic place and route (APR) and generate the
       bitstream using NextPNR.
@@ -74,13 +77,14 @@ class FPGANextPNRFlow(FlowgraphSchema):
         self.edge("syn_fpga", "apr")
 
 
-class FPGAVPRFlow(FlowgraphSchema):
+class FPGAVPRFlow(Flowgraph):
     '''An open-source FPGA flow using Yosys, VPR, and GenFasm.
 
     This flow is designed for academic and research FPGAs, utilizing VPR
     (Versatile Place and Route) for placement and routing.
 
     The flow consists of the following steps:
+
     * **elaborate**: Elaborate the RTL design from sources.
     * **synthesis**: Synthesize the elaborated design into a netlist using Yosys.
     * **place**: Place the netlist components onto the FPGA architecture using VPR.
@@ -105,6 +109,35 @@ class FPGAVPRFlow(FlowgraphSchema):
         self.edge("place", "route")
         self.node("bitstream", genfasm_bitstream.BitstreamTask())
         self.edge("route", "bitstream")
+
+
+class FPGAVPROpenSTAFlow(FPGAVPRFlow):
+    '''An open-source FPGA flow using Yosys, VPR, GenFasm, and OpenSTA.
+
+    This flow is designed for academic and research FPGAs, utilizing VPR
+    (Versatile Place and Route) for placement and routing and OpenSTA for
+    post-implementation timing analysis.
+
+    The flow consists of the following steps:
+
+    * **elaborate**: Elaborate the RTL design from sources.
+    * **synthesis**: Synthesize the elaborated design into a netlist using Yosys.
+    * **place**: Place the netlist components onto the FPGA architecture using VPR.
+    * **route**: Route the connections between placed components using VPR.
+    * **bitstream**: Generate the final bitstream using GenFasm.
+    * **timing**: Perform post-implementation static timing analysis of the design.
+    '''
+    def __init__(self, name: str = "fpgaflow-vpr-open-sta"):
+        """
+        Initializes the FPGAVPROpenSTAFlow.
+
+        Args:
+            name (str): The name of the flow.
+        """
+        super().__init__(name)
+
+        self.node("timing", timing.FPGATimingTask())
+        self.edge("route", "timing")
 
 
 ##################################################

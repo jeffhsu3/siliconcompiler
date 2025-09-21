@@ -5,7 +5,7 @@ import sys
 
 import os.path
 
-from siliconcompiler import Project, FlowgraphSchema, DesignSchema
+from siliconcompiler import Project, Flowgraph, Design
 from siliconcompiler.tools.builtin.nop import NOPTask
 
 from siliconcompiler.scheduler import DockerSchedulerNode
@@ -33,13 +33,13 @@ def docker_image(scroot):
 
 @pytest.fixture
 def project():
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
 
     flow.node("stepone", NOPTask())
     flow.node("steptwo", NOPTask())
     flow.edge("stepone", "steptwo")
 
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
 
@@ -88,5 +88,7 @@ def test_docker_run(docker_image, project):
     # assert "Running in docker container:" in output.out
     # assert output.out.count("Running in docker container:") == 2
 
-    assert project.get("record", "status", step="stepone", index="0") == NodeStatus.SUCCESS
-    assert project.get("record", "status", step="steptwo", index="0") == NodeStatus.SUCCESS
+    assert project.history("job0").get("record", "status", step="stepone", index="0") == \
+        NodeStatus.SUCCESS
+    assert project.history("job0").get("record", "status", step="steptwo", index="0") == \
+        NodeStatus.SUCCESS

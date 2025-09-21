@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import sys
+import tarfile
 import uuid
 
 import os.path
@@ -12,29 +13,32 @@ from inspect import getfullargspec
 from typing import Set, Union, List, Tuple, Type, Callable, TextIO
 
 from siliconcompiler.schema import BaseSchema, NamedSchema, EditableSchema, Parameter, Scope, \
-    SCHEMA_VERSION
+    __version__ as schema_version
 from siliconcompiler.schema.parametervalue import NodeListValue, NodeSetValue
 from siliconcompiler.schema.utils import trim
 
-from siliconcompiler import DesignSchema, LibrarySchema
-from siliconcompiler import FlowgraphSchema
-from siliconcompiler import RecordSchema
-from siliconcompiler import MetricSchema
-from siliconcompiler import ChecklistSchema
-from siliconcompiler import TaskSchema
-from siliconcompiler import ShowTaskSchema, ScreenshotTaskSchema
-from siliconcompiler import OptionSchema
+from siliconcompiler import Design
+from siliconcompiler import Flowgraph
+from siliconcompiler import Checklist
 
-from siliconcompiler.cmdlineschema import CommandLineSchema
-from siliconcompiler.dependencyschema import DependencySchema
-from siliconcompiler.pathschema import PathSchemaBase
+from siliconcompiler.schema_support.record import RecordSchema
+from siliconcompiler.schema_support.metric import MetricSchema
+from siliconcompiler.tool import TaskSchema
+from siliconcompiler.tool import ShowTaskSchema, ScreenshotTaskSchema
+from siliconcompiler.schema_support.option import OptionSchema
+from siliconcompiler.library import LibrarySchema
+
+from siliconcompiler.schema_support.cmdlineschema import CommandLineSchema
+from siliconcompiler.schema_support.dependencyschema import DependencySchema
+from siliconcompiler.schema_support.pathschema import PathSchemaBase
 
 from siliconcompiler.report.dashboard.cli import CliDashboard
-from siliconcompiler.scheduler import Scheduler
+from siliconcompiler.scheduler import Scheduler, SchedulerNode
 from siliconcompiler.utils.logging import SCColorLoggerFormatter, SCLoggerFormatter
 from siliconcompiler.utils import FilterDirectories, get_file_ext
 from siliconcompiler.utils.multiprocessing import MPManager
 from siliconcompiler.flows.showflow import ShowFlow
+from siliconcompiler.flowgraph import RuntimeFlowgraph
 
 
 class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
@@ -45,7 +49,19 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
     and reporting.
     """
 
-    def __init__(self, design: Union[DesignSchema, str] = None):
+    def __init__(self, design: Union[Design, str] = None):
+        """
+        Initializes a new Project instance.
+
+        This sets up the fundamental schema for the project, including global options,
+        default libraries, flowgraphs, and tool configurations. It also initializes
+        the project-specific logger and working directory.
+
+        Args:
+            design (Union[Design, str], optional): The top-level design for the
+                project. Can be a `Design` object or the name of the design as a
+                string. Defaults to None.
+        """
         super().__init__()
 
         # Initialize schema
@@ -53,15 +69,14 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
 
         # Version
         schema.insert(
-            'schemaversion',
+            BaseSchema._version_key,
             Parameter(
                 'str',
                 scope=Scope.GLOBAL,
-                defvalue=SCHEMA_VERSION,
+                defvalue=schema_version,
                 require=True,
                 shorthelp="Schema version number",
                 lock=True,
-                switch="-schemaversion <str>",
                 example=["api: chip.get('schemaversion')"],
                 schelp="""SiliconCompiler schema version number."""))
 
@@ -98,9 +113,9 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                 'index'. The parameter is used the :meth:`.run()` function and
                 is not intended for external use."""))
 
-        schema.insert("checklist", "default", ChecklistSchema())
-        schema.insert("library", "default", DesignSchema())
-        schema.insert("flowgraph", "default", FlowgraphSchema())
+        schema.insert("checklist", "default", Checklist())
+        schema.insert("library", "default", Design())
+        schema.insert("flowgraph", "default", Flowgraph())
         schema.insert("metric", MetricSchema())
         schema.insert("record", RecordSchema())
         schema.insert("tool", "default", "task", "default", TaskSchema())
@@ -215,7 +230,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
     def set(self, *args, field='value', clobber=True, step=None, index=None):
         ret = super().set(*args, field=field, clobber=clobber, step=step, index=index)
 
-        # Special handling keys
+        # Special handling for keys that affect project behavior
         if args[0:2] == ("option", "nodashboard"):
             self.__init_dashboard()
 
@@ -224,21 +239,34 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
     @property
     def logger(self) -> logging.Logger:
         """
-        Returns the logger for this project
+        Returns the logger for this project.
+
+        Returns:
+            logging.Logger: The project-specific logger instance.
         """
         return self.__logger
 
     @property
     def name(self) -> str:
         """
-        Returns the name of the design
+        Returns the name of the design.
+
+        Returns:
+            str: The name of the top-level design.
         """
         return self.get("option", "design")
 
     @property
-    def design(self) -> DesignSchema:
+    def design(self) -> Design:
         """
-        Returns the design object
+        Returns the design object associated with the project.
+
+        Returns:
+            Design: The `Design` schema object for the current project.
+
+        Raises:
+            ValueError: If the design name is not set.
+            KeyError: If the design has not been loaded into the project's libraries.
         """
         design_name = self.name
         if not design_name:
@@ -251,20 +279,27 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
     @property
     def cwd(self) -> str:
         """
-        Returns the working directory for the project
+        Returns the working directory for the project.
+
+        Returns:
+            str: The absolute path of the current working directory.
         """
         return self.__cwd
 
     @classmethod
     def convert(cls, obj: "Project") -> "Project":
         """
-        Convert a project from one type to another
+        Converts a project from one type to another (e.g., Project to SimProject).
 
         Args:
-            obj: Source object to convert from
+            obj (Project): Source object to convert from.
 
         Returns:
-            new object of the new class type
+            Project: A new object of the target class type, populated with
+                     compatible data from the source object.
+
+        Raises:
+            TypeError: If the source object is not an instance of `Project`.
         """
         if not isinstance(obj, Project):
             raise TypeError("source object must be a Project")
@@ -293,9 +328,11 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
     @classmethod
     def _getdict_type(cls) -> str:
         """
-        Returns the meta data for getdict
-        """
+        Returns the object type metadata for `getdict` serialization.
 
+        Returns:
+            str: The name of the `Project` class.
+        """
         return Project.__name__
 
     def __populate_deps(self, obj: DependencySchema = None):
@@ -338,6 +375,11 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
 
         # Restore dependencies
         self.__populate_deps()
+
+        # Preserve logger in history
+        for history in self.getkeys("history"):
+            hist = self.get("history", history, field="schema")
+            hist.__logger = self.__logger
 
         return ret
 
@@ -399,15 +441,15 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
 
     def add_dep(self, obj):
         """
-        Adds a dependency object (e.g., a DesignSchema, FlowgraphSchema, LibrarySchema,
-        or ChecklistSchema) to the project.
+        Adds a dependency object (e.g., a Design, Flowgraph, LibrarySchema,
+        or Checklist) to the project.
 
         This method intelligently adds various types of schema objects to the
         project's internal structure. It also handles recursive addition of
         dependencies if the added object itself is a `DependencySchema`.
 
         Args:
-            obj (Union[DesignSchema, FlowgraphSchema, LibrarySchema, ChecklistSchema,
+            obj (Union[Design, Flowgraph, LibrarySchema, Checklist,
                        List, Set, Tuple]):
                 The dependency object(s) to add. Can be a single schema object
                 or a collection (list, set, tuple) of schema objects.
@@ -420,15 +462,15 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                 self.add_dep(iobj)
             return
 
-        if isinstance(obj, DesignSchema):
+        if isinstance(obj, Design):
             if not self.has_library(obj.name):
                 EditableSchema(self).insert("library", obj.name, obj)
-        elif isinstance(obj, FlowgraphSchema):
+        elif isinstance(obj, Flowgraph):
             self.__import_flow(obj)
         elif isinstance(obj, LibrarySchema):
             if not self.has_library(obj.name):
                 EditableSchema(self).insert("library", obj.name, obj)
-        elif isinstance(obj, ChecklistSchema):
+        elif isinstance(obj, Checklist):
             if obj.name not in self.getkeys("checklist"):
                 EditableSchema(self).insert("checklist", obj.name, obj)
         else:
@@ -438,7 +480,16 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         self._import_dep(obj)
 
     def _import_dep(self, obj: DependencySchema):
-        # Copy dependencies into project
+        """
+        Recursively imports dependencies from a given schema object into the project.
+
+        If the object is a `DependencySchema`, this method iterates through its
+        dependencies, adds them to the project, and then rebuilds the dependency
+        graph to ensure all pointers are correct.
+
+        Args:
+            obj (DependencySchema): The schema object whose dependencies are to be imported.
+        """
         if isinstance(obj, DependencySchema):
             for dep in obj.get_dep():
                 self.add_dep(dep)
@@ -446,9 +497,9 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             # Rebuild dependencies to ensure instances are correct
             self.__populate_deps(obj)
 
-    def __import_flow(self, flow: FlowgraphSchema):
+    def __import_flow(self, flow: Flowgraph):
         """
-        Imports a FlowgraphSchema into the project.
+        Imports a Flowgraph into the project.
 
         If the flowgraph with the given name is not already present, it is
         added to the project's flowgraph schema. This method also instantiates
@@ -456,7 +507,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         that the necessary tool and task schemas are available.
 
         Args:
-            flow (FlowgraphSchema): The flowgraph schema object to import.
+            flow (Flowgraph): The flowgraph schema object to import.
         """
         if flow.name in self.getkeys("flowgraph"):
             return
@@ -506,14 +557,13 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             error = True
         elif design:  # Only check fileset in design if design is valid
             # Assert fileset is in design
-            design_obj = self.design  # This is a mock object
+            design_obj = self.design
             for fileset in filesets:
                 if not design_obj.has_fileset(fileset):
                     self.logger.error(f"{fileset} is not a valid fileset in {design}")
                     error = True
 
             # Assert design has topmodule
-            # This check only happens if filesets are provided and design is valid
             if filesets and design_obj.has_fileset(filesets[0]):
                 if not design_obj.get_topmodule(filesets[0]):
                     self.logger.error(f"topmodule has not been set in {design}/{filesets[0]}")
@@ -530,7 +580,6 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                 error = True
 
         # Check that alias libraries exist
-        # Default to an empty list if 'alias' is not set, to avoid TypeError
         aliases = self.get("option", "alias") or []
         for src_lib, src_fileset, dst_lib, dst_fileset in aliases:
             if not src_lib:
@@ -538,9 +587,6 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                 error = True
                 continue
 
-            # If src_lib is not in getkeys("library"), skip further checks for this alias
-            # as the error would have been caught earlier if it was a 'design' check.
-            # This path is for aliases where src_lib itself might not be a primary design.
             if not self.has_library(src_lib):
                 continue
 
@@ -563,16 +609,16 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                 error = True
                 continue
 
-        # Check flowgraph
-        # Check tasks have classes, cannot check post setup that is a runtime check
+        # Check flowgraph tasks (runtime checks happen later)
 
         return not error
 
     def _init_run(self):
         """
-        Method called before calling :meth:`.check_manifest` to provide a mechanism to
-        setup the project correctly.
+        Method called before :meth:`.check_manifest` to provide a mechanism to
+        setup the project correctly for a run.
         """
+        # Automatically select fileset if only one is available in the design
         if not self.get("option", "fileset") and self.get("option", "design") and \
                 self.has_library(self.get("option", "design")):
             filesets = self.design.getkeys("fileset")
@@ -581,37 +627,40 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                 self.logger.warning(f"Setting design fileset to: {fileset}")
                 self.set("option", "fileset", fileset)
 
-    def run(self, raise_exception=False):
+        # Disable dashboard if breakpoints are set
+        if self.__dashboard and self.get("option", "flow"):
+            breakpoints = set()
+            flow = self.get("flowgraph", self.get("option", "flow"), field="schema")
+            for step, index in flow.get_nodes():
+                if self.get("option", "breakpoint", step=step, index=index):
+                    breakpoints.add((step, index))
+            if breakpoints and self.__dashboard.is_running():
+                breakpoints = sorted(breakpoints)
+                self.logger.info("Disabling dashboard due to breakpoints at: "
+                                 f"{', '.join([f'{step}/{index}' for step, index in breakpoints])}")
+                self.__dashboard.stop()
+
+    def run(self) -> "Project":
         '''
-        Executes tasks in a flowgraph.
+        Executes the compilation flow defined in the project's flowgraph.
 
-        The run function sets up tools and launches runs for every node
-        in the flowgraph starting with 'from' steps and ending at 'to' steps.
-        From/to are taken from the schema from/to parameters if defined,
-        otherwise from/to are defined as the entry/exit steps of the flowgraph.
-        Before starting the process, tool modules are loaded and setup up for each
-        step and index based on on the schema eda dictionary settings.
-        Once the tools have been set up, the manifest is checked using the
-        check_manifest() function and files in the manifest are hashed based
-        on the 'hashmode' schema setting.
+        The run method orchestrates the entire compilation process. It starts by
+        initializing the dashboard and then hands off execution to a `Scheduler`
+        (or `ClientScheduler` for remote runs). The scheduler manages the
+        step-by-step execution of tasks defined in the flowgraph, respecting
+        dependencies and handling errors.
 
-        Once launched, each process waits for preceding steps to complete,
-        as defined by the flowgraph 'inputs' parameter. Once a all inputs
-        are ready, previous steps are checked for errors before the
-        process entered a local working directory and starts to run
-        a tool or to execute a built in Chip function.
+        After the scheduler completes, the dashboard is updated with the final
+        run status, and non-global job parameters are reset. The method returns
+        a `Project` object representing the completed job's history.
 
-        Fatal errors within a step/index process cause all subsequent
-        processes to exit before start, returning control to the the main
-        program which can then exit.
-
-        Args:
-            raise_exception (bool): if True, will rethrow errors that the flow raises,
-                otherwise will report the error and return False
+        Returns:
+            Project: A mutable reference to the completed job's record in the
+                     project history.
 
         Examples:
-            >>> run()
-            Runs the execution flow defined by the flowgraph dictionary.
+            >>> project.run()
+            # Executes the flow, and returns a project object for the completed job.
         '''
         from siliconcompiler.remote import ClientScheduler
 
@@ -628,25 +677,37 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             else:
                 scheduler = Scheduler(self)
             scheduler.run()
-        except Exception as e:
-            if raise_exception:
-                raise e
-            self.logger.error(str(e))
-            return False
         finally:
             if self.__dashboard:
                 # Update dashboard
                 self.__dashboard.update_manifest()
                 self.__dashboard.end_of_run()
 
-        return True
+        self.__reset_job_params()
+
+        return self.history(self.get("option", "jobname"))
+
+    def __reset_job_params(self):
+        """
+        Resets all non-global schema parameters after a run.
+
+        This method iterates through all parameters in the schema and calls
+        `reset()` on any parameter that does not have a 'global' scope,
+        clearing task-specific values for the next run.
+        """
+        for key in self.allkeys():
+            if key[0] == "history":
+                continue
+            param = self.get(*key, field=None)
+            if param.get(field="scope") != Scope.GLOBAL:
+                param.reset()
 
     def _getbuilddir(self) -> str:
         """
         Returns the absolute path to the project's build directory.
 
-        This directory is where all intermediate and final compilation
-        artifacts are stored.
+        This directory is the root for all intermediate and final compilation
+        artifacts.
 
         Returns:
             str: The absolute path to the build directory.
@@ -687,8 +748,6 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                    self.name,
                    self.get('option', 'jobname')]
 
-        # Return jobdirectory if no step defined
-        # Return index 0 by default
         if step is not None:
             dirlist.append(step)
 
@@ -698,7 +757,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             dirlist.append(str(index))
         return os.path.join(*dirlist)
 
-    def getcollectiondir(self):
+    def getcollectiondir(self) -> str:
         """
         Returns the absolute path to the directory where collected files are stored.
 
@@ -715,18 +774,23 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                 verbose: bool = True,
                 whitelist: List[str] = None):
         '''
-        Collects files found in the configuration dictionary and places
-        them in :meth:`.getcollectiondir`. The function only copies in files that have the 'copy'
-        field set as true.
+        Collects files and directories specified in the schema and places
+        them in a collection directory. The function only copies items that have
+        the 'copy' field set to True in their schema definition.
 
         Args:
-            directory (filepath): Output filepath
-            verbose (bool): Flag to indicate if logging should be used
-            whitelist (list[path]): List of directories that are allowed to be
-                collected. If a directory is is found that is not on this list
-                a RuntimeError will be raised.
-        '''
+            directory (str, optional): The output directory for collected files.
+                Defaults to the path from :meth:`.getcollectiondir`.
+            verbose (bool): If True, logs information about each collected file/directory.
+                Defaults to True.
+            whitelist (List[str], optional): A list of absolute paths that are
+                allowed to be collected. If an item to be collected is not on this list,
+                a `RuntimeError` is raised. Defaults to None.
 
+        Raises:
+            RuntimeError: If a file or directory to be collected is not in the `whitelist`.
+            FileNotFoundError: If a specified file or directory cannot be found.
+        '''
         if not directory:
             directory = self.getcollectiondir()
         directory = os.path.abspath(directory)
@@ -855,15 +919,17 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
 
     def history(self, job: str) -> "Project":
         '''
-        Returns a *mutable* reference to ['history', job] as a Project object.
-
-        Raises:
-            KeyError: if job does not currently exist in history
+        Returns a *mutable* reference to a historical job record as a Project object.
 
         Args:
-            job (str): Name of historical job to return.
-        '''
+            job (str): Name of the historical job to retrieve.
 
+        Returns:
+            Project: The `Project` object representing the specified historical job.
+
+        Raises:
+            KeyError: If the specified job does not exist in the history.
+        '''
         if job not in self.getkeys("history"):
             raise KeyError(f"{job} is not a valid job")
 
@@ -871,13 +937,15 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
 
     def _record_history(self):
         '''
-        Copies the current project into the history
+        Copies the current project state into the history record.
         '''
-
         job = self.get("option", "jobname")
         proj = self.copy()
 
-        # Remove history from proj
+        # Preserve logger instance
+        proj.__logger = self.__logger
+
+        # Remove history from the copy to avoid recursion
         EditableSchema(proj).insert("history", BaseSchema(), clobber=True)
 
         if job in self.getkeys("history"):
@@ -886,6 +954,15 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         EditableSchema(self).insert("history", job, proj, clobber=True)
 
     def __getstate__(self):
+        """
+        Prepares the project's state for serialization (pickling).
+
+        Removes non-serializable objects like the logger and dashboard, and
+        stores the multiprocessing manager's address for reconstruction.
+
+        Returns:
+            dict: The serializable state of the object.
+        """
         # Ensure a copy of the state is used
         state = self.__dict__.copy()
 
@@ -902,6 +979,15 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         return state
 
     def __setstate__(self, state):
+        """
+        Restores the project's state from a deserialized (unpickled) state.
+
+        Re-initializes non-serializable objects like the logger and dashboard
+        after restoring the core object dictionary.
+
+        Args:
+            state (dict): The deserialized state of the object.
+        """
         # Retrieve manager address
         MPManager._set_manager_address(state["__manager__"])
         del state["__manager__"]
@@ -916,7 +1002,18 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
 
     def get_filesets(self) -> List[Tuple[NamedSchema, str]]:
         """
-        Returns the filesets selected for this project
+        Returns the filesets selected for this project, resolving any aliases.
+
+        This method retrieves the filesets defined in `['option', 'fileset']`
+        and applies any aliases specified in `['option', 'alias']` to return
+        the effective list of filesets and their parent libraries.
+
+        Returns:
+            List[Tuple[NamedSchema, str]]: A list of tuples, where each tuple
+            contains the parent library (`NamedSchema`) and the fileset name (str).
+
+        Raises:
+            KeyError: If an alias points to a library that is not loaded.
         """
         # Build alias mapping
         alias = {}
@@ -985,49 +1082,49 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             return list(tasks)[0]
         return tasks
 
-    def set_design(self, design: Union[DesignSchema, str]):
+    def set_design(self, design: Union[Design, str]):
         """
         Sets the active design for this project.
 
         This method allows you to specify the primary design that the project
-        will operate on. If a `DesignSchema` object is provided, it is first
+        will operate on. If a `Design` object is provided, it is first
         added as a dependency.
 
         Args:
-            design (Union[DesignSchema, str]): The design object or its name (string)
+            design (Union[Design, str]): The design object or its name (string)
                                                to be set as the current design.
 
         Raises:
-            TypeError: If the provided `design` is not a string or a `DesignSchema` object.
+            TypeError: If the provided `design` is not a string or a `Design` object.
         """
-        if isinstance(design, DesignSchema):
+        if isinstance(design, Design):
             self.add_dep(design)
             design = design.name
         elif not isinstance(design, str):
-            raise TypeError("design must be string or Design object")
+            raise TypeError("design must be a string or a Design object")
 
         return self.set("option", "design", design)
 
-    def set_flow(self, flow: Union[FlowgraphSchema, str]):
+    def set_flow(self, flow: Union[Flowgraph, str]):
         """
         Sets the active flowgraph for this project.
 
         This method allows you to specify the sequence of steps and tasks
-        (the flow) that the project will execute. If a `FlowgraphSchema` object
+        (the flow) that the project will execute. If a `Flowgraph` object
         is provided, it is first added as a dependency.
 
         Args:
-            flow (Union[FlowgraphSchema, str]): The flowgraph object or its name (string)
+            flow (Union[Flowgraph, str]): The flowgraph object or its name (string)
                                                 to be set as the current flow.
 
         Raises:
-            TypeError: If the provided `flow` is not a string or a `FlowgraphSchema` object.
+            TypeError: If the provided `flow` is not a string or a `Flowgraph` object.
         """
-        if isinstance(flow, FlowgraphSchema):
+        if isinstance(flow, Flowgraph):
             self.add_dep(flow)
             flow = flow.name
         elif not isinstance(flow, str):
-            raise TypeError("flow must be string or Flowgraph object")
+            raise TypeError("flow must be a string or a Flowgraph object")
 
         return self.set("option", "flow", flow)
 
@@ -1051,29 +1148,28 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             ValueError: If any of the specified filesets are not found in the currently
                         selected design.
         """
-        if not isinstance(fileset, str):
-            if isinstance(fileset, (list, tuple, set)):
-                if not all([isinstance(v, str) for v in fileset]):
-                    raise TypeError("fileset must be a string or a list/tuple/set of strings")
-            else:
-                raise TypeError("fileset must be a string or a list/tuple/set of strings")
-
         if isinstance(fileset, str):
-            fileset = [fileset]
+            fs_list = [fileset]
+        elif isinstance(fileset, (list, tuple, set)):
+            if not all(isinstance(v, str) for v in fileset):
+                raise TypeError("fileset must be a string or a list/tuple/set of strings")
+            fs_list = list(fileset)
+        else:
+            raise TypeError("fileset must be a string or a list/tuple/set of strings")
 
-        for fs in fileset:
+        for fs in fs_list:
             if not self.design.has_fileset(fs):
                 raise ValueError(f"{fs} is not a valid fileset in {self.design.name}")
 
         if clobber:
-            return self.set("option", "fileset", fileset)
+            return self.set("option", "fileset", fs_list)
         else:
-            return self.add("option", "fileset", fileset)
+            return self.add("option", "fileset", fs_list)
 
     def add_alias(self,
-                  src_dep: Union[DesignSchema, str],
+                  src_dep: Union[Design, str],
                   src_fileset: str,
-                  alias_dep: Union[DesignSchema, str],
+                  alias_dep: Union[Design, str],
                   alias_fileset: str,
                   clobber: bool = False):
         """
@@ -1085,21 +1181,20 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         modifying the original design.
 
         Args:
-            src_dep (Union[DesignSchema, str]): The source design library (object or name)
+            src_dep (Union[Design, str]): The source design library (object or name)
                                                 from which the fileset is being aliased.
             src_fileset (str): The name of the source fileset to alias.
-            alias_dep (Union[DesignSchema, str]): The destination design library (object or name)
+            alias_dep (Union[Design, str]): The destination design library (object or name)
                                                   to which the fileset is being redirected.
                                                   Can be None or an empty string to indicate
                                                   deletion.
             alias_fileset (str): The name of the destination fileset. Can be None or an empty string
                                  to indicate deletion of the fileset reference.
             clobber (bool): If True, any existing alias for `(src_dep, src_fileset)` will be
-                            overwritten. If False, the alias will be added (or updated if it's
-                            the same source). Defaults to False.
+                            overwritten. If False, the alias will be added. Defaults to False.
 
         Raises:
-            TypeError: If `src_dep` or `alias_dep` are not valid types (string or DesignSchema).
+            TypeError: If `src_dep` or `alias_dep` are not valid types (string or Design).
             KeyError: If `alias_dep` is a string but the corresponding library is not loaded.
             ValueError: If `src_fileset` is not found in `src_dep`, or if `alias_fileset` is
                         not found in `alias_dep` (when `alias_fileset` is not None).
@@ -1113,7 +1208,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                 src_dep = None
 
         if src_dep is not None:
-            if isinstance(src_dep, DesignSchema):
+            if isinstance(src_dep, Design):
                 src_dep_name = src_dep.name
                 if not self.has_library(src_dep_name):
                     self.add_dep(src_dep)
@@ -1141,7 +1236,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                 alias_dep = self.get("library", alias_dep, field="schema")
 
         if alias_dep is not None:
-            if isinstance(alias_dep, DesignSchema):
+            if isinstance(alias_dep, Design):
                 alias_dep_name = alias_dep.name
                 if not self.has_library(alias_dep_name):
                     self.add_dep(alias_dep)
@@ -1157,7 +1252,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         else:
             return self.add("option", "alias", alias)
 
-    def has_library(self, library: str) -> bool:
+    def has_library(self, library: Union[str, NamedSchema]) -> bool:
         """
         Checks if a library with the given name exists and is loaded in the project.
 
@@ -1168,7 +1263,6 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         Returns:
             bool: True if the library exists, False otherwise.
         """
-
         if isinstance(library, NamedSchema):
             library = library.name
 
@@ -1176,8 +1270,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
 
     def _summary_headers(self) -> List[Tuple[str, str]]:
         """
-        Generates a list of key-value pairs representing project-specific headers
-        to be included in the summary report.
+        Generates key-value pairs for project-specific headers in the summary report.
 
         This method provides information about the selected design, filesets,
         any active aliases, and the job directory. Projects can extend this
@@ -1219,8 +1312,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
 
     def _snapshot_info(self) -> List[Tuple[str, str]]:
         """
-        Generates a list of key-value pairs representing project-specific
-        information to be included in snapshots.
+        Generates key-value pairs for project-specific information in snapshots.
 
         This method provides basic information about the design used in the
         snapshot. Projects can extend this method to add custom information.
@@ -1229,28 +1321,26 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             List[Tuple[str, str]]: A list of tuples, where each tuple contains
                                    an information label (str) and its corresponding value (str).
         """
-
-        info = [
-            ("Design", self.get("option", "design"))
-        ]
-
-        return info
+        return [("Design", self.get("option", "design"))]
 
     def summary(self, jobname: str = None, fd: TextIO = None) -> None:
         '''
-        Prints a summary of the compilation manifest.
+        Prints a summary of the compilation manifest and results.
 
-        Metrics from the flowgraph nodes, or from/to parameter if
-        defined, are printed out on a per step basis.
+        Metrics from the specified job are printed out on a per-step basis.
 
         Args:
-            jobname (str): If provided prints uses this job to print summary,
-                otherwise the value in :keypath:`option,jobname` will be used.
-            fd (TextIO): If provided prints to this file descriptor instead of stdout.
+            jobname (str, optional): The name of the job to summarize. If not
+                provided, the value in :keypath:`option,jobname` will be used.
+            fd (TextIO, optional): If provided, prints the summary to this file
+                descriptor instead of stdout.
+
+        Raises:
+            ValueError: If there is no history to summarize.
 
         Examples:
             >>> chip.summary()
-            Prints out a summary of the run to stdout.
+            # Prints a summary of the last run to stdout.
         '''
         histories = self.getkeys("history")
 
@@ -1265,6 +1355,11 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             self.logger.warning(f"{org_job} not found in history, picking {jobname}")
 
         history = self.history(jobname)
+
+        if not fd:
+            if self.__dashboard and self.__dashboard.is_running():
+                self.__dashboard.stop()
+
         history.get("metric", field='schema').summary(
             headers=history._summary_headers(),
             fd=fd)
@@ -1284,8 +1379,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         Args:
             filetype (str, optional): The file extension (e.g., 'v', 'def', 'gds').
                                       Required if `filename` is not provided.
-            step (str, optional): The name of the task step (e.g., 'syn', 'place').
-                                  Required.
+            step (str): The name of the task step (e.g., 'syn', 'place'). Required.
             index (str, optional): The task index within the step. Defaults to "0".
             directory (str, optional): The node directory within the step to search
                                        (e.g., 'outputs', 'reports'). Defaults to "outputs".
@@ -1301,8 +1395,8 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                         when `filename` is not provided.
 
         Examples:
-            >>> vg_filepath = chip.find_result('vg', 'syn')
-            Returns the absolute path to the gate level verilog.
+            >>> # Get path to gate-level Verilog from synthesis step
+            >>> vg_filepath = chip.find_result('vg', step='syn')
         """
 
         if filename and step is None:
@@ -1324,51 +1418,66 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                 os.path.join(workdir, directory, f'{design_name}.{filetype}.gz')
             ]
         else:
-            checkfiles = [
-                os.path.join(workdir, directory, filename)
-            ]
+            checkfiles = [os.path.join(workdir, directory, filename)]
 
-        for filename in checkfiles:
-            self.logger.debug(f"Finding node file: {filename}")
-            if os.path.exists(filename):
-                return os.path.abspath(filename)
+        for f in checkfiles:
+            self.logger.debug(f"Finding node file: {f}")
+            if os.path.exists(f):
+                return os.path.abspath(f)
 
         return None
 
-    def snapshot(self, path: str = None, display: bool = True) -> None:
+    def snapshot(self, path: str = None, jobname: str = None, display: bool = True) -> None:
         '''
-        Creates a snapshot image summarizing the job's progress and key information.
+        Creates a snapshot image summarizing a job's progress and key information.
 
         This function generates a PNG image that provides a visual overview
-        of the compilation job. The image can be saved to a specified path
-        and optionally displayed after generation.
+        of the compilation job.
 
         Args:
             path (str, optional): The file path where the snapshot image should be saved.
                                   If not provided, it defaults to
                                   `<job_directory>/<design_name>.png`.
+            jobname (str, optional): The job to snapshot. If not provided, the value
+                                   in :keypath:`option,jobname` will be used.
             display (bool, optional): If True, the generated image will be opened for viewing
                                       if the system supports it and `option,nodisplay` is False.
                                       Defaults to True.
 
+        Raises:
+            ValueError: If there is no history to snapshot.
+
         Examples:
             >>> chip.snapshot()
-            Creates a snapshot image in the default location.
+            # Creates a snapshot image in the default location for the last run.
         '''
         from siliconcompiler.report import generate_summary_image, _open_summary_image
 
+        histories = self.getkeys("history")
+        if not histories:
+            raise ValueError("no history to snapshot")
+
+        if jobname is None:
+            jobname = self.get("option", "jobname")
+        if jobname not in histories:
+            org_job = jobname
+            jobname = histories[0]
+            self.logger.warning(f"{org_job} not found in history, picking {jobname}")
+
+        history = self.history(jobname)
+
         if not path:
-            path = os.path.join(self.getworkdir(), f'{self.design.name}.png')
+            path = os.path.join(history.getworkdir(), f'{history.design.name}.png')
 
         if os.path.exists(path):
             os.remove(path)
 
-        generate_summary_image(self, path, self._snapshot_info())
+        generate_summary_image(history, path, history._snapshot_info())
 
         if os.path.isfile(path) and not self.get('option', 'nodisplay') and display:
             _open_summary_image(path)
 
-    def show(self, filename=None, screenshot=False, extension=None) -> str:
+    def show(self, filename: str = None, screenshot: bool = False, extension: str = None) -> str:
         '''
         Opens a graphical viewer for a specified file or the last generated layout.
 
@@ -1383,12 +1492,12 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         extensions from registered showtools.
 
         Args:
-            filename (path, optional): The path to the file to display. If None,
-                                       the system attempts to find the most recent
-                                       layout file. Defaults to None.
-            screenshot (bool, optional): If True, the operation is treated as a
-                                         screenshot request, using `ScreenshotTaskSchema`
-                                         instead of `ShowTaskSchema`. Defaults to False.
+            filename (str, optional): The path to the file to display. If None,
+                                      the system attempts to find the most recent
+                                      layout file. Defaults to None.
+            screenshot (bool): If True, the operation is treated as a screenshot request,
+                               using `ScreenshotTaskSchema` instead of `ShowTaskSchema`.
+                               Defaults to False.
             extension (str, optional): The specific file extension to search for when
                                        automatically finding a file (e.g., 'gds', 'lef').
                                        Used only if `filename` is None. Defaults to None.
@@ -1398,15 +1507,16 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                  otherwise None.
 
         Examples:
-            >>> show('build/oh_add/job0/write.gds/0/outputs/oh_add.gds')
-            Displays a GDS file using a viewer assigned by the showtool.
-        '''
+            >>> # Display a specific GDS file
+            >>> chip.show('build/my_design/job0/write_gds/0/outputs/my_design.gds')
 
+            >>> # Automatically find and show the last generated layout
+            >>> chip.show()
+        '''
         tool_cls = ScreenshotTaskSchema if screenshot else ShowTaskSchema
 
         sc_jobname = self.get("option", "jobname")
-        sc_step = None
-        sc_index = None
+        sc_step, sc_index = None, None
 
         has_filename = filename is not None
         # Finding last layout if no argument specified
@@ -1450,7 +1560,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         if filename is None:
             self.logger.error('Unable to automatically find layout in build directory.')
             self.logger.error('Try passing in a full path to show() instead.')
-            return
+            return None
 
         filepath = os.path.abspath(filename)
 
@@ -1498,14 +1608,71 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         task.set_shownode(jobname=sc_jobname, step=sc_step, index=sc_index)
 
         # run show flow
-        proj.run(raise_exception=True)
+        proj.run()
         if screenshot:
             return proj.find_result('png', step=task.task())
 
+    def archive(self, jobname: str = None, include: List[str] = None, archive_name: str = None):
+        '''Archive a job directory into a compressed tarball.
+
+        Creates a single compressed archive (.tgz) based on the specified job.
+        By default, only outputs, reports, log files, and the final manifest
+        are archived.
+
+        Args:
+            jobname (str, optional): The job to archive. By default, archives the job specified
+                in `['option', 'jobname']`.
+            include (List[str], optional): Overrides default inclusion rules. Accepts a list of glob
+                patterns matched from the root of individual step/index directories.
+                To capture all files, supply `["*"]`.
+            archive_name (str, optional): The path to the output archive file. Defaults to
+                `<design>_<jobname>.tgz`.
+        '''
+        histories = self.getkeys("history")
+        if not histories:
+            raise ValueError("no history to archive")
+
+        if jobname is None:
+            jobname = self.get("option", "jobname")
+        if jobname not in histories:
+            org_job = jobname
+            jobname = histories[0]
+            self.logger.warning(f"{org_job} not found in history, picking {jobname}")
+
+        history = self.history(jobname)
+
+        flow = history.get('option', 'flow')
+        flowgraph_nodes = RuntimeFlowgraph(
+            history.get("flowgraph", flow, field='schema'),
+            from_steps=history.get('option', 'from'),
+            to_steps=history.get('option', 'to'),
+            prune_nodes=history.get('option', 'prune')).get_nodes()
+
+        if not archive_name:
+            archive_name = f"{history.name}_{jobname}.tgz"
+
+        self.logger.info(f'Creating archive {archive_name}...')
+
+        with tarfile.open(archive_name, "w:gz") as tar:
+            for step, index in flowgraph_nodes:
+                SchedulerNode(history, step, index).archive(tar, include, True)
+
 
 class SimProject(Project):
+    """
+    A specialized Project class tailored for simulation tasks.
+
+    This class can be extended with simulation-specific schema parameters,
+    methods, and flows.
+    """
     pass
 
 
 class LintProject(Project):
+    """
+    A specialized Project class tailored for linting tasks.
+
+    This class can be extended with linting-specific schema parameters,
+    methods, and flows.
+    """
     pass

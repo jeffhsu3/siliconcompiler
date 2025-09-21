@@ -1,40 +1,70 @@
 #!/usr/bin/env python3
 
-from siliconcompiler import FPGAProject, DesignSchema, FPGASchema
+# Import the necessary classes for an FPGA project. Note the use of
+# FPGAProject and FPGA, which are specific to FPGA flows.
+from siliconcompiler import FPGAProject, Design, FPGA
+# Import a pre-defined flow for FPGAs.
 from siliconcompiler.flows import fpgaflow
 
 
 def main():
-    '''RTL2bitstream flow'''
+    '''
+    This script demonstrates a standard RTL-to-bitstream flow for an FPGA.
 
-    # Create design
-    design = DesignSchema("blinky")
+    It takes a Verilog design for a simple "blinky" circuit, compiles it
+    for a specific iCE40 FPGA part, and generates a bitstream file that
+
+    can be programmed onto the hardware.
+    '''
+
+    # --- Design Setup ---
+    # Create a design schema to hold the project's configuration.
+    design = Design("blinky")
+    # Set up a 'dataroot' to easily reference local files.
     design.set_dataroot("blinky", __file__)
+
+    # Configure the "rtl" (Register-Transfer Level) fileset.
     with design.active_dataroot("blinky"), design.active_fileset("rtl"):
         design.set_topmodule("blinky")
         design.add_file("blinky.v")
+
+    # Configure the "pcf" (Physical Constraints File) fileset.
+    # This is a crucial file for FPGAs. It maps the ports in the Verilog
+    # design (e.g., 'clk', 'led') to the physical pins on the FPGA chip.
     with design.active_dataroot("blinky"), design.active_fileset("pcf"):
         design.add_file("icebreaker.pcf")
 
-    # Create project
+    # --- Project Setup ---
+    # Create an FPGAProject, which is tailored for FPGA-specific needs.
     project = FPGAProject(design)
 
-    # Define filesets
+    # Tell the project which filesets are required for this compilation.
     project.add_fileset("rtl")
     project.add_fileset("pcf")
 
-    # Load FPGA
-    fpga = FPGASchema("ice40")
+    # --- FPGA Target Configuration ---
+    # Define the specific FPGA chip we are targeting.
+    fpga = FPGA("ice40")
+    # The partname is a vendor-specific code that uniquely identifies the FPGA.
+    # This tells the tools about the chip's resources (LUTs, BRAM, etc.) and package.
     fpga.set_partname("ice40up5k-sg48")
+    # Apply this FPGA configuration to the project.
     project.set_fpga(fpga)
 
-    # Load flow
+    # --- Flow Loading ---
+    # Set the compilation flow. The FPGANextPNRFlow is a pre-built flow
+    # that uses open-source tools like Yosys for synthesis and nextpnr
+    # for place-and-route.
     project.set_flow(fpgaflow.FPGANextPNRFlow())
 
-    # Run
+    # --- Execution & Analysis ---
+    # Run the entire FPGA flow. This will synthesize the RTL, place and route
+    # the design onto the FPGA fabric, and generate a final bitstream file.
+    # The 'assert' will cause the script to exit if the run fails.
     assert project.run()
 
-    # Analyze
+    # Display a summary of the results. For FPGAs, this typically includes
+    # a report on resource utilization (how many LUTs, FFs, etc. were used).
     project.summary()
 
     return project

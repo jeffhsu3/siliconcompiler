@@ -19,7 +19,7 @@ from siliconcompiler.utils.logging import get_console_formatter, SCInRunLoggerFo
 from siliconcompiler.schema import utils as schema_utils
 
 from siliconcompiler.package import Resolver
-from siliconcompiler.record import RecordTime, RecordTool
+from siliconcompiler.schema_support.record import RecordTime, RecordTool
 from siliconcompiler.schema import Journal
 from siliconcompiler.scheduler import send_messages
 
@@ -73,6 +73,8 @@ class SchedulerNode:
         self.__generate_test_case = not replay
         self.__replay = replay
         self.__hash = self.__project.get("option", "hash")
+        self.__breakpoint = self.__project.get("option", "breakpoint",
+                                               step=self.__step, index=self.__index)
         self.__builtin = False
 
         self.__enforce_inputfiles = True
@@ -520,7 +522,11 @@ class SchedulerNode:
                     print_warning(key, "file package")
                     return True
 
-                for check_file in self.__project.find_files(*key, step=step, index=index):
+                files = self.__project.find_files(*key, step=step, index=index)
+                if not isinstance(files, (list, set, tuple)):
+                    files = [files]
+
+                for check_file in files:
                     if get_file_time(check_file) > previous_time:
                         print_warning(key, "timestamp")
                         return True
@@ -580,6 +586,11 @@ class SchedulerNode:
             bool: True if a re-run is required, False otherwise.
         """
         from siliconcompiler import Project
+
+        if self.__breakpoint:
+            # Breakpoint is set to must run
+            self.logger.debug("Breakpoint is set")
+            return True
 
         # Load previous manifest
         previous_node = None
@@ -920,8 +931,7 @@ class SchedulerNode:
                     self.__workdir,
                     self.__project.get('option', 'quiet', step=self.__step, index=self.__index),
                     self.__project.get('option', 'loglevel', step=self.__step, index=self.__index),
-                    self.__project.get('option', 'breakpoint',
-                                       step=self.__step, index=self.__index),
+                    self.__breakpoint,
                     self.__project.get('option', 'nice', step=self.__step, index=self.__index),
                     self.__project.get('option', 'timeout', step=self.__step, index=self.__index))
             except Exception as e:
@@ -966,7 +976,10 @@ class SchedulerNode:
             self.__record)
 
         # Save a successful manifest
-        if self.__record.get('status', step=self.__step, index=self.__index) != NodeStatus.SKIPPED:
+        if self.__error:
+            self.__record.set('status', NodeStatus.ERROR, step=self.__step, index=self.__index)
+        elif self.__record.get('status', step=self.__step, index=self.__index) != \
+                NodeStatus.SKIPPED:
             self.__record.set('status', NodeStatus.SUCCESS, step=self.__step, index=self.__index)
 
         self.__project.write_manifest(self.__manifests["output"])
@@ -1006,9 +1019,9 @@ class SchedulerNode:
             self.__index,
             archive_directory=self.__jobworkdir,
             include_pdks=False,
-            include_specific_pdks=lambdapdk.get_pdks(),
+            include_specific_pdks=lambdapdk.get_pdk_names(),
             include_libraries=False,
-            include_specific_libraries=lambdapdk.get_libs(),
+            include_specific_libraries=lambdapdk.get_lib_names(),
             hash_files=self.__hash,
             verbose_collect=False)
 
@@ -1234,7 +1247,7 @@ class SchedulerNode:
         if os.path.exists(self.__workdir):
             shutil.rmtree(self.__workdir)
 
-    def archive(self, tar: tarfile.TarFile, include: List[str] = None, verbose: bool = None):
+    def archive(self, tar: tarfile.TarFile, include: List[str] = None, verbose: bool = False):
         """
         Archives the node's results into a tar file.
 

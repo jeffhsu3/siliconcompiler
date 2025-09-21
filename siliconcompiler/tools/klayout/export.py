@@ -24,10 +24,14 @@ class ExportTask(KLayoutTask, ScreenshotParams):
         if f"{self.design_topmodule}.def" in self.get_files_from_input_nodes():
             self.add_input_file(ext="def")
         else:
-            for lib, fileset in self.schema().get_filesets():
-                if lib.get_file(fileset=fileset, filetype="def"):
+            for lib, fileset in self.project.get_filesets():
+                if lib.has_file(fileset=fileset, filetype="def"):
                     self.add_required_key(lib, "fileset", fileset, "file", "def")
                     break
+
+        self.add_required_key("var", "stream")
+        self.add_required_key("var", "timestamps")
+        self.add_required_key("var", "screenshot")
 
         default_stream = self.get("var", "stream")
 
@@ -35,7 +39,7 @@ class ExportTask(KLayoutTask, ScreenshotParams):
         self.add_output_file(ext="lyt")
         self.add_output_file(ext="lyp")
 
-        self.add_required_tool_key("var", "stream")
+        self.add_required_key("var", "stream")
 
         sc_stream_order = [default_stream, *[s for s in ("gds", "oas") if s != default_stream]]
         req_set = False
@@ -47,14 +51,14 @@ class ExportTask(KLayoutTask, ScreenshotParams):
         if not req_set:
             self.add_required_key(self.pdk, "pdk", "layermapfileset", "klayout", "def", "klayout")
 
-        for lib in self.schema().get("asic", "asiclib"):
+        for lib in self.project.get("asic", "asiclib"):
             lib_requires_stream = True
-            if self.schema().valid('library', lib, "tool", "klayout", 'allow_missing_cell') and \
-                    self.schema().get('library', lib, "tool", "klayout", 'allow_missing_cell'):
+            if self.project.valid('library', lib, "tool", "klayout", 'allow_missing_cell') and \
+                    self.project.get('library', lib, "tool", "klayout", 'allow_missing_cell'):
                 lib_requires_stream = False
 
             req_set = False
-            libobj = self.schema().get("library", lib, field="schema")
+            libobj = self.project.get("library", lib, field="schema")
             for s in sc_stream_order:
                 for fileset in libobj.get("asic", "aprfileset"):
                     if libobj.valid("fileset", fileset, "file", s):

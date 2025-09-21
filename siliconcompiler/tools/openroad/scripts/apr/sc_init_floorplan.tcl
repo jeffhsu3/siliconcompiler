@@ -55,10 +55,6 @@ if { [sc_cfg_exists input asic floorplan] } {
     }
 }
 
-proc sc_format_area { area } {
-    return "([lindex $area 0], [lindex $area 1]) - ([lindex $area 2], [lindex $area 3])"
-}
-
 puts "Floorplan information:"
 puts "  Die area: [sc_format_area [ord::get_die_area]]"
 puts "  Core area: [sc_format_area [ord::get_core_area]]"
@@ -79,18 +75,23 @@ if { $sc_openroad_tracks != "" } {
 
 # TODO
 set do_automatic_pins 1
-if {
-    [sc_cfg_tool_task_exists file padring] &&
-    [llength [sc_cfg_tool_task_get file padring]] > 0
-} {
+if { [llength [sc_cfg_tool_task_get var padringfileset]] > 0 } {
     set do_automatic_pins 0
 
     ###############################
     # Generate pad ring
     ###############################
-    foreach padring_file [sc_cfg_tool_task_get {file} padring] {
+    set padringfiles_read []
+    set padringfileset [sc_cfg_tool_task_get var padringfileset]
+    set padringfiles [sc_cfg_get_fileset $sc_designlib $padringfileset tcl]
+    foreach padring_file $padringfiles {
+        if { [lsearch -exact $padringfiles_read $padring_file] != -1 } {
+            continue
+        }
         puts "Sourcing padring configuration: ${padring_file}"
         source $padring_file
+
+        lappend padringfiles_read $padring_file
     }
 
     if { [sc_design_has_unplaced_pads] } {

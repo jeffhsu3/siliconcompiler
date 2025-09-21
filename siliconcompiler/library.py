@@ -1,10 +1,11 @@
-from typing import final, Union, List
+from typing import final, Union, List, Tuple
 
-from siliconcompiler import PackageSchema
+from siliconcompiler.schema_support.packageschema import PackageSchema
 
-from siliconcompiler.dependencyschema import DependencySchema
-from siliconcompiler.filesetschema import FileSetSchema
-from siliconcompiler.schema import NamedSchema
+from siliconcompiler.schema_support.dependencyschema import DependencySchema
+from siliconcompiler.schema_support.filesetschema import FileSetSchema
+from siliconcompiler.schema_support.pathschema import PathSchema
+from siliconcompiler.schema import NamedSchema, BaseSchema
 
 from siliconcompiler.schema import EditableSchema, Parameter, Scope, PerNode
 from siliconcompiler.schema.utils import trim
@@ -112,14 +113,66 @@ class ToolLibrarySchema(LibrarySchema):
 
         return super()._from_dict(manifest, keypath, version)
 
+    def _generate_doc(self, doc,
+                      ref_root: str = "",
+                      key_offset: Tuple[str] = None,
+                      detailed: bool = True):
+        from .schema.docs.utils import build_section, strong, keypath, code, para, build_table
+        from docutils import nodes
 
-class StdCellLibrarySchema(ToolLibrarySchema, DependencySchema):
+        if not key_offset:
+            key_offset = []
+
+        tools_added = False
+        if "tool" in self.getkeys():
+            tools_sec = build_section("Tools", f"{ref_root}-tools")
+            for tool in self.getkeys("tool"):
+                tool_sec = build_section(tool, f"{ref_root}-tools-{tool}")
+
+                # Show var definitions
+                table = [[strong('Parameters'), strong('Type'), strong('Help')]]
+                for key in self.getkeys("tool", tool):
+                    key_node = nodes.paragraph()
+                    key_node += keypath(list(key_offset) + list(self._keypath) +
+                                        ["tool", tool, key],
+                                        doc.env.docname)
+                    table.append([
+                        key_node,
+                        code(self.get("tool", tool, key, field="type")),
+                        para(self.get("tool", tool, key, field="help"))
+                    ])
+                if len(table) > 1:
+                    tool_defs = build_section("Variables", f"{ref_root}-tools-{tool}-defns")
+                    colspec = r'{|\X{2}{5}|\X{1}{5}|\X{2}{5}|}'
+                    tool_defs += build_table(table, colspec=colspec)
+                    tool_sec += tool_defs
+
+                tool_param = BaseSchema._generate_doc(self.get("tool", tool, field="schema"),
+                                                      doc,
+                                                      ref_root=f"{ref_root}-tools-{tool}-configs",
+                                                      key_offset=key_offset,
+                                                      detailed=False)
+                if not tool_param:
+                    continue
+
+                tool_cfg = build_section("Configuration", f"{ref_root}-tools-{tool}-configs")
+                tool_cfg += tool_param
+                tool_sec += tool_cfg
+                tools_sec += tool_sec
+                tools_added = True
+
+        if tools_added:
+            return tools_sec
+        return None
+
+
+class StdCellLibrary(ToolLibrarySchema, DependencySchema):
     """
     A class for managing standard cell library schemas.
     """
     def __init__(self, name: str = None):
         """
-        Initializes a StdCellLibrarySchema object.
+        Initializes a StdCellLibrary object.
 
         Args:
             name (str, optional): The name of the standard cell library. Defaults to None.
@@ -220,11 +273,11 @@ class StdCellLibrarySchema(ToolLibrarySchema, DependencySchema):
         Adds the PDK associated with this library.
 
         Args:
-            pdk (class:`PDKSchema`): pdk to associate
+            pdk (class:`PDK`): pdk to associate
             default (bool): if True, sets this PDK in [asic,pdk]
         """
-        from siliconcompiler import PDKSchema
-        if isinstance(pdk, PDKSchema):
+        from siliconcompiler import PDK
+        if isinstance(pdk, PDK):
             pdk_name = pdk.name
             self.add_dep(pdk)
 
@@ -270,24 +323,20 @@ class StdCellLibrarySchema(ToolLibrarySchema, DependencySchema):
 
         return self.add("asic", "libcornerfileset", corner, model, fileset)
 
-    def add_asic_pexcornerfileset(self, corner: str, model: str, fileset: str = None):
+    def add_asic_pexcornerfileset(self, corner: str, fileset: str = None):
         """
         Adds a mapping between filesets a corners defined in the library.
 
         Args:
             corner (str): name of the timing or parasitic corner
-            model(str): type of delay modeling used, eg. spice, etc.
             fileset (str): name of the fileset
         """
         if not fileset:
             fileset = self._get_active("fileset")
 
-        if not isinstance(model, str):
-            raise TypeError("model must be a string")
-
         self._assert_fileset(fileset)
 
-        return self.add("asic", "pexcornerfileset", corner, model, fileset)
+        return self.add("asic", "pexcornerfileset", corner, fileset)
 
     def add_asic_aprfileset(self, fileset: str = None):
         """
@@ -328,4 +377,47 @@ class StdCellLibrarySchema(ToolLibrarySchema, DependencySchema):
         Returns the meta data for getdict.
         """
 
-        return StdCellLibrarySchema.__name__
+        return StdCellLibrary.__name__
+
+    def _generate_doc(self, doc,
+                      ref_root: str = "",
+                      key_offset: Tuple[str] = None,
+                      detailed: bool = True):
+        from .schema.docs.utils import build_section
+        docs = []
+
+        if not key_offset:
+            key_offset = ["StdCellLibrary"]
+
+        # Show dataroot
+        dataroot = PathSchema._generate_doc(self, doc, ref_root=ref_root, key_offset=key_offset)
+        if dataroot:
+            docs.append(dataroot)
+
+        # Show package information
+        package = PackageSchema._generate_doc(self, doc, ref_root=ref_root, key_offset=key_offset)
+        if package:
+            docs.append(package)
+
+        # Show filesets
+        fileset = FileSetSchema._generate_doc(self, doc, ref_root=ref_root, key_offset=key_offset)
+        if fileset:
+            docs.append(fileset)
+
+        # Show ASIC
+        asic_sec = build_section("ASIC", f"{ref_root}-asic")
+        asic_sec += BaseSchema._generate_doc(self.get("asic", field="schema"),
+                                             doc,
+                                             ref_root=f"{ref_root}-asic",
+                                             key_offset=key_offset,
+                                             detailed=False)
+        docs.append(asic_sec)
+
+        # Show tool information
+        tools_sec = ToolLibrarySchema._generate_doc(self, doc,
+                                                    ref_root=ref_root,
+                                                    key_offset=key_offset)
+        if tools_sec:
+            docs.append(tools_sec)
+
+        return docs

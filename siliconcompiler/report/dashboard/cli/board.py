@@ -6,6 +6,8 @@ import re
 import time
 import threading
 
+import os.path
+
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
@@ -20,7 +22,7 @@ from rich.console import Console
 from rich.console import Group
 from rich.padding import Padding
 
-from siliconcompiler import SiliconCompilerError, NodeStatus
+from siliconcompiler import NodeStatus
 from siliconcompiler.utils.logging import SCColorLoggerFormatter
 from siliconcompiler.flowgraph import RuntimeFlowgraph
 
@@ -521,7 +523,7 @@ class Board:
         Args:
             chip: The SiliconCompiler chip object at the end of the run.
         """
-        if not self._active:
+        if not self.is_running():
             return
 
         self._update_render_data(chip, complete=True)
@@ -950,6 +952,9 @@ class Board:
 
         chip_id = f"{job_data.design}/{job_data.jobname}"
         with self._job_data_lock:
+            if complete and chip_id in self._job_data and self._job_data[chip_id].complete:
+                # Dont update again, requires a start of a new run
+                return
             self._job_data[chip_id] = job_data
             self._board_info.data_modified = True
             self._render_event.set()
@@ -984,7 +989,7 @@ class Board:
             node_outputs = {}
             flow = chip.get("option", "flow")
             if not flow:
-                raise SiliconCompilerError("dummy error")
+                raise RuntimeError("dummy error")
 
             runtime_flow = RuntimeFlowgraph(
                 chip.get("flowgraph", flow, field='schema'),
@@ -1062,7 +1067,7 @@ class Board:
                     if node not in node_priority:
                         continue
                     node_priority[node] = min(node_priority[node], level)
-        except SiliconCompilerError:
+        except RuntimeError:
             pass
 
         design = chip.get("option", "design")

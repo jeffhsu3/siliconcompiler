@@ -3,7 +3,7 @@ import pytest
 
 import os.path
 
-from siliconcompiler import FlowgraphSchema
+from siliconcompiler import Flowgraph
 from siliconcompiler import Project
 from siliconcompiler.tools.slang import lint
 from siliconcompiler.tools.slang import elaborate
@@ -38,28 +38,28 @@ def test_lint(heartbeat_design):
     proj = Project(heartbeat_design)
     proj.add_fileset("rtl")
 
-    flow = FlowgraphSchema("lint")
+    flow = Flowgraph("lint")
     flow.node("lint", lint.Lint())
     proj.set_flow(flow)
 
     assert proj.run()
 
-    assert proj.get('metric', 'errors', step='lint', index='0') == 0
-    assert proj.get('metric', 'warnings', step='lint', index='0') == 0
+    assert proj.history("job0").get('metric', 'errors', step='lint', index='0') == 0
+    assert proj.history("job0").get('metric', 'warnings', step='lint', index='0') == 0
 
 
 def test_elaborate(heartbeat_design):
     proj = Project(heartbeat_design)
     proj.add_fileset("rtl")
 
-    flow = FlowgraphSchema("elaborate")
+    flow = Flowgraph("elaborate")
     flow.node("elaborate", elaborate.Elaborate())
     proj.set_flow(flow)
 
     assert proj.run()
 
-    assert proj.get('metric', 'errors', step='elaborate', index='0') == 0
-    assert proj.get('metric', 'warnings', step='elaborate', index='0') == 0
+    assert proj.history("job0").get('metric', 'errors', step='elaborate', index='0') == 0
+    assert proj.history("job0").get('metric', 'warnings', step='elaborate', index='0') == 0
 
     assert proj.find_result("v", step="elaborate") == \
         os.path.abspath("build/heartbeat/job0/elaborate/0/outputs/heartbeat.v")
@@ -72,11 +72,11 @@ def test_slang_duplicate_inputs(heartbeat_design):
     proj = Project(heartbeat_design)
     proj.add_fileset("rtl_double")
 
-    flow = FlowgraphSchema("lint")
+    flow = Flowgraph("lint")
     flow.node("lint", lint.Lint())
     proj.set_flow(flow)
 
     assert proj.run()
 
-    assert proj.get('metric', 'errors', step='lint', index='0') == 0
-    assert proj.get('metric', 'warnings', step='lint', index='0') == 0
+    assert proj.history("job0").get('metric', 'errors', step='lint', index='0') == 0
+    assert proj.history("job0").get('metric', 'warnings', step='lint', index='0') == 0

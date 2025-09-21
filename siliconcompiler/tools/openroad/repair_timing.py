@@ -1,10 +1,11 @@
 from siliconcompiler.tools.openroad._apr import APRTask
 from siliconcompiler.tools.openroad._apr import OpenROADSTAParameter, OpenROADDPLParameter, \
-    OpenROADRSZDRVParameter, OpenROADRSZTimingParameter
+    OpenROADRSZDRVParameter, OpenROADRSZTimingParameter, OpenROADFillCellsParameter
 
 
 class RepairTimingTask(APRTask, OpenROADSTAParameter, OpenROADDPLParameter,
-                       OpenROADRSZDRVParameter, OpenROADRSZTimingParameter):
+                       OpenROADRSZDRVParameter, OpenROADRSZTimingParameter,
+                       OpenROADFillCellsParameter):
     '''
     Perform setup and hold timing repairs
     '''
@@ -46,3 +47,8 @@ class RepairTimingTask(APRTask, OpenROADSTAParameter, OpenROADDPLParameter,
             'clock_trees',
             'module_view'
         ])
+
+        self.add_required_key("var", "rsz_skip_drv_repair")
+        self.add_required_key("var", "rsz_skip_setup_repair")
+        self.add_required_key("var", "rsz_skip_hold_repair")
+        self.add_required_key("var", "rsz_skip_recover_power")

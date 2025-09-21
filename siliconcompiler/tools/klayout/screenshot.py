@@ -1,4 +1,4 @@
-from siliconcompiler import ScreenshotTaskSchema, TaskSchema
+from siliconcompiler.tool import ScreenshotTaskSchema, TaskSchema
 from siliconcompiler.tools.klayout.show import ShowTask
 
 
@@ -24,6 +24,12 @@ class ScreenshotParams(TaskSchema):
 
     def setup(self):
         super().setup()
+
+        self.add_required_key("var", "show_resolution")
+        self.add_required_key("var", "show_bins")
+        self.add_required_key("var", "show_margin")
+        self.add_required_key("var", "show_linewidth")
+        self.add_required_key("var", "show_oversampling")
 
         if self.get("var", "show_bins") == (1, 1):
             self.add_output_file(ext="png")

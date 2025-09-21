@@ -4,6 +4,7 @@ from siliconcompiler.flows import asicflow, synflow
 
 from lambdapdk.sky130.libs.sky130sc import Sky130_SCHDLibrary
 from lambdapdk.sky130.libs.sky130sram import Sky130Lambdalib_SinglePort
+from lambdapdk.sky130.libs.sky130io import Sky130LambdaLib_IO
 
 
 ####################################################
@@ -28,15 +29,15 @@ def setup(project: ASICProject, syn_np=1, floorplan_np=1, physyn_np=1, place_np=
 
     # 4. Timing corners
     scenario = project.get_timingconstraints().make_scenario("slow")
-    scenario.add_libcorner("slow")
+    scenario.add_libcorner(["slow", "generic"])
     scenario.set_pexcorner("typical")
     scenario.add_check("setup")
     scenario = project.get_timingconstraints().make_scenario("typical")
-    scenario.add_libcorner("typical")
+    scenario.add_libcorner(["typical", "generic"])
     scenario.set_pexcorner("typical")
     scenario.add_check("power")
     scenario = project.get_timingconstraints().make_scenario("fast")
-    scenario.add_libcorner("fast")
+    scenario.add_libcorner(["fast", "generic"])
     scenario.set_pexcorner("typical")
     scenario.add_check("hold")
 
@@ -49,3 +50,4 @@ def setup(project: ASICProject, syn_np=1, floorplan_np=1, physyn_np=1, place_np=
 
     # 5. Assign Lambdalib aliases
     Sky130Lambdalib_SinglePort.alias(project)
+    Sky130LambdaLib_IO.alias(project)

@@ -1,7 +1,8 @@
-from siliconcompiler import FlowgraphSchema, ShowTaskSchema
+from siliconcompiler import Flowgraph
+from siliconcompiler.tool import ShowTaskSchema
 
 
-class ShowFlow(FlowgraphSchema):
+class ShowFlow(Flowgraph):
     """A minimal flow to display a design file using its associated viewer.
 
     This flow is automatically generated and consists of a single node that
@@ -19,6 +20,11 @@ class ShowFlow(FlowgraphSchema):
         self.set_name("showflow")
 
         self.node(task.task(), task)
+
+    @classmethod
+    def make_docs(cls):
+        from siliconcompiler.tools.klayout.show import ShowTask
+        return ShowFlow(ShowTask())
 
 
 ##################################################

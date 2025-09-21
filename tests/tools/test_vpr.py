@@ -2,14 +2,14 @@ import pytest
 
 import os.path
 
-from siliconcompiler import FPGAProject, FlowgraphSchema, DesignSchema
+from siliconcompiler import FPGAProject, Flowgraph, Design
 from siliconcompiler.scheduler import SchedulerNode
 from siliconcompiler.tools.vpr.place import PlaceTask
 from siliconcompiler.tools.vpr.route import RouteTask
 from siliconcompiler.tools.vpr import VPRFPGA
 from siliconcompiler.tools.genfasm.bitstream import BitstreamTask
 
-from tools.inputimporter.importer import ImporterTask
+from tools.inputimporter import ImporterTask
 
 
 @pytest.mark.eda
@@ -19,7 +19,7 @@ def test_version(gcd_design):
     proj = FPGAProject(gcd_design)
     proj.add_fileset("rtl")
 
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     flow.node("version", PlaceTask())
     proj.set_flow(flow)
 
@@ -33,14 +33,14 @@ def test_version(gcd_design):
 @pytest.mark.quick
 @pytest.mark.ready
 def test_run(datadir):
-    design = DesignSchema("adder")
+    design = Design("adder")
     with design.active_fileset("rtl"):
         design.set_topmodule("adder")
 
     proj = FPGAProject(design)
     proj.add_fileset("rtl")
 
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     flow.node("import", ImporterTask())
     flow.node("place", PlaceTask())
     flow.node("route", RouteTask())
@@ -75,7 +75,7 @@ def test_vpr_max_router_iterations(gcd_design):
     proj = FPGAProject(gcd_design)
     proj.add_fileset("rtl")
 
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     flow.node("route", RouteTask())
     proj.set_flow(flow)
 
@@ -100,7 +100,7 @@ def test_vpr_max_router_iterations(gcd_design):
     with node.runtime():
         node.setup()
         arguments = node.task.get_runtime_arguments()
-        assert len(arguments) == 43
+        assert len(arguments) == 45
         del arguments[10]  # cpu count
         assert arguments == [
             '--device', 'faux_device',
@@ -117,6 +117,7 @@ def test_vpr_max_router_iterations(gcd_design):
             '--sweep_constant_primary_outputs', 'off',
             '--sweep_dangling_blocks', 'off',
             '--clock_modeling', 'ideal',
+            '--router_lookahead', 'map',
             '--timing_analysis', 'off',
             '--read_rr_graph', os.path.abspath("test_graph.xml"),
             '--route_chan_width', '50',
@@ -136,7 +137,7 @@ def test_vpr_place_with_constraint(gcd_design, monkeypatch):
     proj = FPGAProject(gcd_design)
     proj.add_fileset("rtl")
 
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     flow.node("place", PlaceTask())
     proj.set_flow(flow)
 
@@ -165,8 +166,8 @@ def test_vpr_place_with_constraint(gcd_design, monkeypatch):
         monkeypatch.chdir(node.workdir)
         arguments = node.task.get_runtime_arguments()
         monkeypatch.undo()
-        assert len(arguments) == 40
-        del arguments[32]  # read_rr_graph path
+        assert len(arguments) == 42
+        del arguments[34]  # read_rr_graph path
         del arguments[10]  # cpu count
         del arguments[8]  # arch path
         assert arguments == [
@@ -183,6 +184,7 @@ def test_vpr_place_with_constraint(gcd_design, monkeypatch):
             '--sweep_constant_primary_outputs', 'off',
             '--sweep_dangling_blocks', 'off',
             '--clock_modeling', 'ideal',
+            '--router_lookahead', 'map',
             '--timing_analysis', 'off',
             '--read_vpr_constraints', 'inputs/sc_constraints.xml',
             '--read_rr_graph',
@@ -197,14 +199,14 @@ def test_vpr_place_with_constraint(gcd_design, monkeypatch):
 
 def test_vpr_gen_post_implementation_netlist(gcd_design):
     with gcd_design.active_fileset("sdc-test"):
-        gcd_design.add_file("test.sdc")
+        gcd_design.add_file(os.path.abspath("test.sdc"))
     with open('test.sdc', 'w') as f:
         f.write('test')
 
     proj = FPGAProject(gcd_design)
     proj.add_fileset(["rtl", "sdc-test"])
 
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     flow.node("route", RouteTask())
     proj.set_flow(flow)
 
@@ -233,7 +235,7 @@ def test_vpr_gen_post_implementation_netlist(gcd_design):
         assert node.task.get("var", "gen_post_implementation_netlist") is True
 
         arguments = node.task.get_runtime_arguments()
-        assert len(arguments) == 55
+        assert len(arguments) == 57
         del arguments[10]  # cpu count
         assert arguments == [
             '--device', 'faux_device',
@@ -250,6 +252,7 @@ def test_vpr_gen_post_implementation_netlist(gcd_design):
             '--sweep_constant_primary_outputs', 'off',
             '--sweep_dangling_blocks', 'off',
             '--clock_modeling', 'ideal',
+            '--router_lookahead', 'map',
             '--sdc_file', os.path.abspath("test.sdc"),
             '--timing_report_detail', 'aggregated',
             '--timing_report_npaths', '20',

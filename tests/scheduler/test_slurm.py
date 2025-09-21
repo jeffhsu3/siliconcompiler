@@ -4,7 +4,7 @@ import os.path
 
 from unittest.mock import patch
 
-from siliconcompiler import Project, FlowgraphSchema, DesignSchema, NodeStatus
+from siliconcompiler import Project, Flowgraph, Design, NodeStatus
 from siliconcompiler.tools.builtin.nop import NOPTask
 
 from siliconcompiler.scheduler import SlurmSchedulerNode
@@ -12,13 +12,13 @@ from siliconcompiler.scheduler import SlurmSchedulerNode
 
 @pytest.fixture
 def project():
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
 
     flow.node("stepone", NOPTask())
     flow.node("steptwo", NOPTask())
     flow.edge("stepone", "steptwo")
 
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
 
@@ -73,6 +73,7 @@ def test_get_runtime_file_name():
 
 @pytest.mark.eda
 @pytest.mark.quick
+@pytest.mark.ready
 def test_slurm_local_py(project):
     '''Basic Python API test: build the GCD example using only Python code.
        Note: Requires that the test runner be connected to a cluster, or configured
@@ -85,9 +86,11 @@ def test_slurm_local_py(project):
     # Run the chip's build process synchronously.
     assert project.run()
 
-    assert os.path.isfile('build/gcd/job0/gcd.pkg.json')
-    assert os.path.isfile('build/gcd/job0/stepone/0/outputs/gcd.pkg.json')
-    assert os.path.isfile('build/gcd/job0/steptwo/0/outputs/gcd.pkg.json')
+    assert os.path.isfile('build/testdesign/job0/testdesign.pkg.json')
+    assert os.path.isfile('build/testdesign/job0/stepone/0/outputs/testdesign.pkg.json')
+    assert os.path.isfile('build/testdesign/job0/steptwo/0/outputs/testdesign.pkg.json')
 
-    assert project.get("record", "status", step="stepone", index="0") == NodeStatus.SUCCESS
-    assert project.get("record", "status", step="steptwo", index="0") == NodeStatus.SUCCESS
+    assert project.history("job0").get("record", "status", step="stepone", index="0") == \
+        NodeStatus.SUCCESS
+    assert project.history("job0").get("record", "status", step="steptwo", index="0") == \
+        NodeStatus.SUCCESS

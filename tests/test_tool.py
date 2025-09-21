@@ -10,10 +10,12 @@ import os.path
 
 from unittest.mock import patch, ANY
 
-from siliconcompiler import RecordSchema, MetricSchema, FlowgraphSchema, \
-    ShowTaskSchema, ScreenshotTaskSchema
-from siliconcompiler import TaskSchema, Project
-from siliconcompiler import DesignSchema
+from siliconcompiler import Flowgraph
+from siliconcompiler.tool import ShowTaskSchema, ScreenshotTaskSchema
+from siliconcompiler.schema_support.metric import MetricSchema
+from siliconcompiler.schema_support.record import RecordSchema
+from siliconcompiler.tool import TaskSchema
+from siliconcompiler import Design, Project
 from siliconcompiler.schema import BaseSchema, EditableSchema, Parameter, SafeSchema
 from siliconcompiler.schema.parameter import PerNode, Scope
 from siliconcompiler.tool import TaskExecutableNotFound, TaskError, TaskTimeout
@@ -76,7 +78,7 @@ def running_project():
         def __init__(self):
             super().__init__()
 
-            design = DesignSchema("testdesign")
+            design = Design("testdesign")
             with design.active_fileset("rtl"):
                 design.set_topmodule("designtop")
             self.set_design(design)
@@ -85,7 +87,7 @@ def running_project():
             self._Project__logger = logging.getLogger()
             self.logger.setLevel(logging.INFO)
 
-            flow = FlowgraphSchema("testflow")
+            flow = Flowgraph("testflow")
             flow.node("running", NOPTask())
             flow.node("notrunning", NOPTask())
             flow.edge("running", "notrunning")
@@ -114,7 +116,7 @@ def test_init():
     assert tool.step is None
     assert tool.index is None
     assert tool.logger is None
-    assert tool.schema() is None
+    assert tool.project is None
 
 
 def test_tool():
@@ -129,10 +131,13 @@ def test_task():
         TaskSchema().task()
 
 
-def test_task_with_name():
-    task = TaskSchema()
-    task.set_name("thistask")
+def test_task_name():
+    class NameTask(TaskSchema):
+        def task(self):
+            return "thistask"
+    task = NameTask()
     assert task.task() == "thistask"
+    assert task.name == "thistask"
 
 
 def test_runtime_invalid_type():
@@ -168,7 +173,7 @@ def test_runtime(running_node):
         assert runtool.index == '0'
         assert runtool.node is running_node
         assert runtool.logger is running_node.project.logger
-        assert runtool.schema() is running_node.project
+        assert runtool.project is running_node.project
 
 
 def test_runtime_node_only(running_node):
@@ -177,7 +182,7 @@ def test_runtime_node_only(running_node):
         assert runtool.index == '0'
         assert runtool.node is None
         assert runtool.logger is None
-        assert runtool.schema() is None
+        assert runtool.project is None
 
 
 def test_runtime_same_task(running_node):
@@ -189,12 +194,12 @@ def test_runtime_same_task(running_node):
         assert runtool0.index == '0'
         assert runtool0.node is running_node
         assert runtool0.logger is running_node.project.logger
-        assert runtool0.schema() is running_node.project
+        assert runtool0.project is running_node.project
         assert runtool1.step == 'notrunning'
         assert runtool1.index == '0'
         assert runtool1.node is running1
         assert runtool1.logger is running_node.project.logger
-        assert runtool1.schema() is running_node.project
+        assert runtool1.project is running_node.project
 
         assert runtool0.set("option", "tool0_opt")
         assert runtool1.set("option", "tool1_opt")
@@ -213,22 +218,16 @@ def test_runtime_different(running_node):
         assert runtool.step == 'notrunning'
         assert runtool.index == '0'
         assert runtool.logger is running_node.project.logger
-        assert runtool.schema() is running_node.project
+        assert runtool.project is running_node.project
 
 
 def test_schema_access(running_node):
     with running_node.task.runtime(running_node) as runtool:
-        assert runtool.schema() is running_node.project
-        assert isinstance(runtool.schema("record"), RecordSchema)
-        assert isinstance(runtool.schema("metric"), MetricSchema)
-        assert isinstance(runtool.schema("flow"), FlowgraphSchema)
-        assert isinstance(runtool.schema("runtimeflow"), RuntimeFlowgraph)
-
-
-def test_schema_access_invalid(running_node):
-    with running_node.task.runtime(running_node) as runtool:
-        with pytest.raises(ValueError, match="invalid is not a schema section"):
-            runtool.schema("invalid")
+        assert runtool.project is running_node.project
+        assert isinstance(runtool.schema_record, RecordSchema)
+        assert isinstance(runtool.schema_metric, MetricSchema)
+        assert isinstance(runtool.schema_flow, Flowgraph)
+        assert isinstance(runtool.schema_flowruntime, RuntimeFlowgraph)
 
 
 def test_design_name(running_node):
@@ -900,10 +899,10 @@ def test_post_process():
 def test_resetting_state_in_copy(running_node):
     tool = TaskSchema()
     with running_node.task.runtime(running_node) as runtool:
-        assert runtool.schema() is not None
+        assert runtool.project is not None
 
         tool = copy.deepcopy(runtool)
-        assert tool.schema() is None
+        assert tool.project is None
 
 
 def test_generate_replay_script(running_node, monkeypatch):
@@ -1555,13 +1554,19 @@ def test_add_required_key_obj(running_node):
                                           "tool,builtin,task,nop,this,key,is,required,too"]
 
 
-def test_add_required_tool_key(running_node):
+def test_add_required_key_tool(running_node):
     with running_node.task.runtime(running_node) as runtool:
-        assert runtool.add_required_tool_key("this", "key", "is", "required")
-        assert runtool.get("require") == ["tool,builtin,task,nop,this,key,is,required"]
-        assert runtool.add_required_tool_key("this", "key", "is", "required", "too")
-        assert runtool.get("require") == ["tool,builtin,task,nop,this,key,is,required",
-                                          "tool,builtin,task,nop,this,key,is,required,too"]
+        assert runtool.add_required_key("exe")
+        assert runtool.get("require") == ["tool,builtin,task,nop,exe"]
+        assert runtool.add_required_key("path")
+        assert runtool.get("require") == ["tool,builtin,task,nop,exe",
+                                          "tool,builtin,task,nop,path"]
+
+
+def test_add_required_key_not_tool(running_node):
+    with running_node.task.runtime(running_node) as runtool:
+        assert runtool.add_required_key("option", "design")
+        assert runtool.get("require") == ["option,design"]
 
 
 def test_add_required_key_invalid(running_node):
@@ -1966,7 +1971,7 @@ def test_show_check_task_none(cls):
 
 @pytest.mark.parametrize("cls", [ShowTaskSchema, ScreenshotTaskSchema])
 def test_show_tcl_vars(cls):
-    with patch("siliconcompiler.TaskSchema.get_tcl_variables") as tcl_vars:
+    with patch("siliconcompiler.tool.TaskSchema.get_tcl_variables") as tcl_vars:
         tcl_vars.return_value = {}
         assert cls().get_tcl_variables() == {
             "sc_do_screenshot": "true" if cls is ScreenshotTaskSchema else "false"}
@@ -2013,7 +2018,8 @@ def test_show_register_task():
     class Test(ShowTaskSchema):
         pass
 
-    with patch.dict("siliconcompiler.ShowTaskSchema._ShowTaskSchema__TASKS", clear=True) as tasks:
+    with patch.dict("siliconcompiler.tool.ShowTaskSchema._ShowTaskSchema__TASKS", clear=True) \
+            as tasks:
         assert len(tasks) == 0
         ShowTaskSchema.register_task(Test)
         assert len(tasks) == 1
@@ -2026,7 +2032,7 @@ def test_show_get_task():
             return ["ext"]
         pass
 
-    with patch.dict("siliconcompiler.ShowTaskSchema._ShowTaskSchema__TASKS", clear=True), \
+    with patch.dict("siliconcompiler.tool.ShowTaskSchema._ShowTaskSchema__TASKS", clear=True), \
             patch("siliconcompiler.utils.showtools.showtasks") as showtasks:
         assert ShowTaskSchema.get_task("ext").__class__ is Test
         showtasks.assert_called_once()

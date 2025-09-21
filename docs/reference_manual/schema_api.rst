@@ -25,7 +25,6 @@ Useful APIs
     BaseSchema.write_manifest
     BaseSchema.read_manifest
     BaseSchema.from_manifest
-    BaseSchema.active
 
 **Editing schema:**
 
@@ -37,67 +36,63 @@ Useful APIs
     EditableSchema.search
 
 Schema Classes
-===============
+==============
 
-.. autoclass:: siliconcompiler.DesignSchema
+.. autoclass:: siliconcompiler.Design
     :members:
     :show-inheritance:
     :inherited-members:
 
-.. autoclass:: siliconcompiler.LibrarySchema
+.. autoclass:: siliconcompiler.library.LibrarySchema
     :members:
     :show-inheritance:
     :inherited-members:
 
-.. autoclass:: siliconcompiler.RecordSchema
+.. autoclass:: siliconcompiler.schema_support.record.RecordSchema
     :members:
     :show-inheritance:
     :inherited-members:
 
-.. autoclass:: siliconcompiler.MetricSchema
+.. autoclass:: siliconcompiler.schema_support.metric.MetricSchema
     :members:
     :show-inheritance:
     :inherited-members:
 
-.. autoclass:: siliconcompiler.PDKSchema
+.. autoclass:: siliconcompiler.PDK
     :members:
     :show-inheritance:
     :inherited-members:
 
-.. autoclass:: siliconcompiler.FlowgraphSchema
+.. autoclass:: siliconcompiler.Flowgraph
     :members:
     :show-inheritance:
     :inherited-members:
 
-.. autoclass:: siliconcompiler.ChecklistSchema
+.. autoclass:: siliconcompiler.Checklist
     :members:
     :show-inheritance:
     :inherited-members:
 
-.. autoclass:: siliconcompiler.ToolSchema
+.. autoclass:: siliconcompiler.tool.TaskSchema
     :members:
     :show-inheritance:
     :inherited-members:
 
-.. autoclass:: siliconcompiler.TaskSchema
+.. autoclass:: siliconcompiler.FPGA
     :members:
     :show-inheritance:
     :inherited-members:
 
-.. autoclass:: siliconcompiler.ASICSchema
+.. autoclass:: siliconcompiler.StdCellLibrary
     :members:
     :show-inheritance:
     :inherited-members:
 
-.. autoclass:: siliconcompiler.FPGASchema
+.. autoclass:: siliconcompiler.Schematic
     :members:
     :show-inheritance:
     :inherited-members:
 
-.. autoclass:: siliconcompiler.StdCellLibrarySchema
-    :members:
-    :show-inheritance:
-    :inherited-members:
 
 ASIC Constraint Classes
 =======================
@@ -133,6 +128,29 @@ ASIC Constraint Classes
     :inherited-members:
 
 .. autoclass:: siliconcompiler.constraints.ASICComponentConstraint
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
+FPGA Constraint Classes
+=======================
+
+.. autoclass:: siliconcompiler.constraints.FPGATimingConstraintSchema
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
+.. autoclass:: siliconcompiler.constraints.FPGATimingScenarioSchema
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
+.. autoclass:: siliconcompiler.constraints.FPGAComponentConstraints
+    :members:
+    :show-inheritance:
+    :inherited-members:
+
+.. autoclass:: siliconcompiler.constraints.FPGAPinConstraints
     :members:
     :show-inheritance:
     :inherited-members:
@@ -204,20 +222,20 @@ Core Schema Classes
 Supporting Classes
 ==================
 
-.. autoclass:: siliconcompiler.dependencyschema.DependencySchema
+.. autoclass:: siliconcompiler.schema_support.dependencyschema.DependencySchema
     :members:
     :show-inheritance:
     :inherited-members:
 
-.. autoclass:: siliconcompiler.cmdlineschema.CommandLineSchema
+.. autoclass:: siliconcompiler.schema_support.cmdlineschema.CommandLineSchema
     :members:
 
-.. autoclass:: siliconcompiler.pathschema.PathSchema
+.. autoclass:: siliconcompiler.schema_support.pathschema.PathSchema
     :members:
     :show-inheritance:
     :inherited-members:
 
-.. autoclass:: siliconcompiler.filesetschema.FileSetSchema
+.. autoclass:: siliconcompiler.schema_support.filesetschema.FileSetSchema
     :members:
     :show-inheritance:
     :inherited-members:
@@ -245,7 +263,7 @@ Supporting Classes
     :show-inheritance:
     :inherited-members:
 
-.. autoclass:: siliconcompiler.PackageSchema
+.. autoclass:: siliconcompiler.schema_support.packageschema.PackageSchema
     :members:
     :show-inheritance:
     :inherited-members:

@@ -2,7 +2,7 @@ from typing import Union, Set, List, Tuple
 
 from siliconcompiler.schema import BaseSchema, NamedSchema, EditableSchema, Parameter, \
     PerNode, Scope
-from siliconcompiler import DesignSchema
+from siliconcompiler import Design
 
 
 class ASICTimingScenarioSchema(NamedSchema):
@@ -65,7 +65,8 @@ class ASICTimingScenarioSchema(NamedSchema):
                 switch="-constraint_timing_pexcorner 'scenario <str>'",
                 example=["api: chip.set('constraint', 'timing', 'worst', 'pexcorner', 'max')"],
                 help="""Parasitic corner applied to the scenario. The
-                'pexcorner' string must match a corner found in :keypath:`pdk,<pdk>,pexmodel`."""))
+                'pexcorner' string must match a corner found in
+                :keypath:`PDK,pdk,pexmodelfileset`."""))
 
         schema.insert(
             'opcond',
@@ -78,7 +79,7 @@ class ASICTimingScenarioSchema(NamedSchema):
                 example=["api: chip.set('constraint', 'timing', 'worst', 'opcond', 'typical_1.0')"],
                 help="""Operating condition applied to the scenario. The value
                 can be used to access specific conditions within the library
-                timing models from the :keypath:`asic,logiclib` timing models."""))
+                timing models from the :keypath:`ASICProject,asic,asiclib` timing models."""))
 
         schema.insert(
             'mode',
@@ -301,7 +302,7 @@ class ASICTimingScenarioSchema(NamedSchema):
         return self.get("temperature", step=step, index=index)
 
     def add_sdcfileset(self,
-                       design: Union[DesignSchema, str],
+                       design: Union[Design, str],
                        fileset: str,
                        clobber: bool = False,
                        step: str = None, index: Union[str, int] = None):
@@ -309,7 +310,7 @@ class ASICTimingScenarioSchema(NamedSchema):
         Adds an SDC fileset for a given design.
 
         Args:
-            design (:class:`DesignSchema` or str): The design object or the name of the design to
+            design (:class:`Design` or str): The design object or the name of the design to
                 associate the fileset with.
             fileset (str): The name of the SDC fileset to add.
             clobber (bool): If True, existing SDC filesets for the design at the specified
@@ -319,10 +320,10 @@ class ASICTimingScenarioSchema(NamedSchema):
             index (str, optional): index name.
 
         Raises:
-            TypeError: If `design` is not a DesignSchema object or a string, or if `fileset` is not
+            TypeError: If `design` is not a Design object or a string, or if `fileset` is not
                 a string.
         """
-        if isinstance(design, DesignSchema):
+        if isinstance(design, Design):
             design = design.name
 
         if not isinstance(design, str):

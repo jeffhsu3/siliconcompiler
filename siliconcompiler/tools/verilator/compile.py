@@ -6,8 +6,8 @@ from siliconcompiler.tools.verilator import VerilatorTask
 class CompileTask(VerilatorTask):
     '''
     Compiles Verilog and C/C++ sources into an executable. In addition to the
-    standard RTL inputs, this task reads C/C++ sources from :keypath:`input,
-    hll, c`.  Outputs an executable in ``outputs/<design>.vexe``.
+    standard RTL inputs, this task reads C/C++ sources.
+    Outputs an executable in ``outputs/<design>.vexe``.
     '''
     def __init__(self):
         super().__init__()
@@ -45,29 +45,29 @@ class CompileTask(VerilatorTask):
         self.add_output_file(ext="vexe")
 
         # Mark required
-        self.add_required_tool_key("var", "mode")
-        self.add_required_tool_key("var", "trace")
-        self.add_required_tool_key("var", "trace_type")
-        self.add_required_tool_key("var", "initialize_random")
+        self.add_required_key("var", "mode")
+        self.add_required_key("var", "trace")
+        self.add_required_key("var", "trace_type")
+        self.add_required_key("var", "initialize_random")
 
         added_key = False
-        for lib, fileset in self.schema().get_filesets():
-            if lib.get_file(fileset=fileset, filetype="c"):
+        for lib, fileset in self.project.get_filesets():
+            if lib.has_file(fileset=fileset, filetype="c"):
                 self.add_required_key(lib, "fileset", fileset, "file", "c")
                 added_key = True
         if not added_key:
-            self.add_required_key(self.schema().design, "fileset",
-                                  self.schema().get("option", "fileset")[0], "file", "c")
+            self.add_required_key(self.project.design, "fileset",
+                                  self.project.get("option", "fileset")[0], "file", "c")
 
         if self.get("var", "cincludes"):
-            self.add_required_tool_key("var", "cincludes")
+            self.add_required_key("var", "cincludes")
         if self.get("var", "cflags"):
-            self.add_required_tool_key("var", "cflags")
+            self.add_required_key("var", "cflags")
         if self.get("var", "ldflags"):
-            self.add_required_tool_key("var", "ldflags")
+            self.add_required_key("var", "ldflags")
 
         if self.get("var", "pins_bv") is not None:
-            self.add_required_tool_key("var", "pins_bv")
+            self.add_required_key("var", "pins_bv")
 
     def runtime_options(self):
         options = super().runtime_options()
@@ -124,7 +124,7 @@ class CompileTask(VerilatorTask):
         if ld_flags:
             options.extend(['-LDFLAGS', shlex.join(ld_flags)])
 
-        for lib, fileset in self.schema().get_filesets():
+        for lib, fileset in self.project.get_filesets():
             for value in lib.get_file(fileset=fileset, filetype="c"):
                 options.append(value)
 

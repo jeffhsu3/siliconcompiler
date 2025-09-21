@@ -6,16 +6,16 @@ from typing import List, Union, Tuple, Dict
 
 from siliconcompiler import utils
 
-from siliconcompiler import LibrarySchema
+from siliconcompiler.library import LibrarySchema
 
-from siliconcompiler.dependencyschema import DependencySchema
+from siliconcompiler.schema_support.dependencyschema import DependencySchema
 from siliconcompiler.schema import NamedSchema
 from siliconcompiler.schema import EditableSchema, Parameter, Scope
 from siliconcompiler.schema.utils import trim
 
 
 ###########################################################################
-class DesignSchema(LibrarySchema, DependencySchema):
+class Design(LibrarySchema, DependencySchema):
     '''
     Schema for a 'design', which is a chip object that can be compiled.
 
@@ -27,7 +27,7 @@ class DesignSchema(LibrarySchema, DependencySchema):
 
     def __init__(self, name: str = None):
         '''
-        Initializes a new DesignSchema object.
+        Initializes a new Design object.
 
         Args:
             name (str, optional): The name of the design. Defaults to None.
@@ -135,6 +135,18 @@ class DesignSchema(LibrarySchema, DependencySchema):
         """
         return self.__get(fileset, 'idir', is_file=True)
 
+    def has_idir(self, fileset: str = None) -> bool:
+        """Returns true if idirs are defined for the fileset
+
+        Args:
+            fileset (str or list[str]): Fileset(s) to query. If not provided,
+                the active fileset is used.
+
+        Returns:
+            bool: True if the fileset contains directories.
+        """
+        return bool(self.__get(fileset, 'idir', is_file=False))
+
     ##############################################
     def add_define(self,
                    value: str,
@@ -230,6 +242,18 @@ class DesignSchema(LibrarySchema, DependencySchema):
         """
         return self.__get(fileset, 'libdir', is_file=True)
 
+    def has_libdir(self, fileset: str = None) -> bool:
+        """Returns true if library directories are defined for the fileset
+
+        Args:
+            fileset (str or list[str]): Fileset(s) to query. If not provided,
+                the active fileset is used.
+
+        Returns:
+            bool: True if the fileset contains directories.
+        """
+        return bool(self.__get(fileset, 'libdir', is_file=False))
+
     ###############################################
     def add_lib(self,
                 value: str,
@@ -309,13 +333,17 @@ class DesignSchema(LibrarySchema, DependencySchema):
         return self.get('fileset', fileset, 'param', name)
 
     ###############################################
-    def add_depfileset(self, dep: Union["DesignSchema", str], depfileset: str, fileset: str = None):
+    def add_depfileset(self, dep: Union["Design", str],
+                       depfileset: str = None,
+                       fileset: str = None):
         """
         Record a reference to an imported dependency's fileset.
 
         Args:
-           dep (:class:`DesignSchema` or str): Dependency name or object.
-           depfileset (str): Dependency fileset.
+           dep (:class:`Design` or str): Dependency name or object.
+           depfileset (str): Dependency fileset, if not specified, the fileset will
+            default to the same as the fileset or if only one fileset is present in
+            the dep that will be chosen.
            fileset (str): Fileset name. If not provided, the active fileset is
             used.
 
@@ -328,15 +356,29 @@ class DesignSchema(LibrarySchema, DependencySchema):
 
         if isinstance(dep, str):
             dep_name = dep
-            dep = self.get_dep(dep_name)
-        elif isinstance(dep, DesignSchema):
+            if dep_name != self.name:
+                dep = self.get_dep(dep_name)
+            else:
+                dep = self
+        elif isinstance(dep, Design):
             dep_name = dep.name
-            self.add_dep(dep, clobber=True)
+            if dep is not self:
+                self.add_dep(dep, clobber=True)
         else:
             raise TypeError("dep is not a valid type")
 
-        if not isinstance(dep, DesignSchema):
+        if not isinstance(dep, Design):
             raise ValueError(f"cannot associate fileset ({depfileset}) with {dep.name}")
+
+        if depfileset is None:
+            if dep.has_fileset(fileset):
+                depfileset = fileset
+            else:
+                filesets = dep.getkeys("fileset")
+                if len(filesets) == 1:
+                    depfileset = filesets[0]
+                else:
+                    raise ValueError(f"depfileset must be specified for {dep.name}")
 
         if not dep.has_fileset(depfileset):
             raise ValueError(f"{dep.name} does not have {depfileset} as a fileset")
@@ -585,7 +627,7 @@ class DesignSchema(LibrarySchema, DependencySchema):
     ################################################
     # Helper Functions
     ################################################
-    def __set_add(self, fileset, option, value, clobber=False, typelist=None, dataroot=None):
+    def __set_add(self, fileset, option, value, clobber=False, typelist=None, dataroot=...):
         '''
         Internal helper to set or add a parameter value in the schema.
 
@@ -621,8 +663,10 @@ class DesignSchema(LibrarySchema, DependencySchema):
         if value is None:
             raise ValueError(f"None is an illegal {option} value")
 
-        if not dataroot:
-            dataroot = self._get_active("package")
+        if dataroot is ...:
+            dataroot = None
+        else:
+            dataroot = self._get_active_dataroot(dataroot)
 
         with self.active_dataroot(dataroot):
             if list in typelist and not clobber:
@@ -632,7 +676,7 @@ class DesignSchema(LibrarySchema, DependencySchema):
 
         return params
 
-    def __get(self, fileset, option, is_file=False):
+    def __get(self, fileset: str, option: str, is_file: bool = False) -> List[str]:
         '''
         Internal helper to get a parameter value from the schema.
 
@@ -662,7 +706,7 @@ class DesignSchema(LibrarySchema, DependencySchema):
         This is used to identify the object type during serialization.
         """
 
-        return DesignSchema.__name__
+        return Design.__name__
 
     def get_fileset(self,
                     filesets: Union[List[str], str],
@@ -704,8 +748,11 @@ class DesignSchema(LibrarySchema, DependencySchema):
                     if new_depfileset:
                         depfileset = new_depfileset
                 else:
-                    dep_obj = self.get_dep(dep)
-                if not isinstance(dep_obj, DesignSchema):
+                    if dep == self.name:
+                        dep_obj = self
+                    else:
+                        dep_obj = self.get_dep(dep)
+                if not isinstance(dep_obj, Design):
                     raise TypeError(f"{dep} must be a design object.")
 
                 mapping.extend(dep_obj.get_fileset(depfileset, alias))
@@ -725,12 +772,12 @@ def schema_design(schema):
     '''
     Defines the schema parameters specific to a design.
 
-    This function is called by the `DesignSchema` constructor to set up
+    This function is called by the `Design` constructor to set up
     its unique schema elements, such as `topmodule`, `idir`, `define`, etc.,
     under the `fileset` key.
 
     Args:
-        schema (DesignSchema): The schema object to configure.
+        schema (Design): The schema object to configure.
     '''
 
     schema = EditableSchema(schema)
@@ -802,8 +849,8 @@ def schema_design(schema):
                 "api: chip.set('fileset', 'rtl, 'libdir', '/usr/lib')"],
             help=trim("""
             Specifies directories to scan for libraries provided with the
-            :keypath:`lib` parameter. If multiple paths are provided, they are
-            searched based on the order of the libdir list.""")))
+            :keypath:`Design,fileset,<fileset>,lib` parameter. If multiple paths are provided,
+            they are searched based on the order of the libdir list.""")))
 
     schema.insert(
         'fileset', fileset, 'lib',
@@ -816,7 +863,7 @@ def schema_design(schema):
             help=trim("""
             Specifies libraries to use during compilation. The compiler searches for
             library in the compiler standard library paths and in the
-            paths specified by :keypath:`libdir` parameter.""")))
+            paths specified by :keypath:`Design,fileset,<fileset>,libdir` parameter.""")))
 
     name = 'default'
     schema.insert(

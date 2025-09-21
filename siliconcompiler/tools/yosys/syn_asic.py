@@ -22,12 +22,6 @@ class _ASICTask(ASICTaskSchema, YosysTask):
             copy=False
         )
         self.add_parameter(
-            "synthesis_libraries_macros",
-            "[file]",
-            "generated liberty files for use with synthesis for macros",
-            copy=False
-        )
-        self.add_parameter(
             "synthesis_corner",
             "{str}",
             "Timing corners to use for synthesis")
@@ -35,7 +29,7 @@ class _ASICTask(ASICTaskSchema, YosysTask):
     def setup(self):
         super().setup()
 
-        self.add_required_tool_key("var", "synthesis_corner")
+        self.add_required_key("var", "synthesis_corner")
         self._determine_synthesis_corner()
 
     def _determine_synthesis_corner(self):
@@ -43,7 +37,7 @@ class _ASICTask(ASICTaskSchema, YosysTask):
             return
 
         # determine corner based on setup corner from constraints
-        scenarios = self.schema().get("constraint", "timing", field="schema")
+        scenarios = self.project.get("constraint", "timing", field="schema")
         for scenario in scenarios.get_scenario().values():
             if not scenario.get_libcorner():
                 continue
@@ -67,22 +61,23 @@ class _ASICTask(ASICTaskSchema, YosysTask):
         mark cells dont use and format liberty files for yosys and abc
         """
 
-        # Clear in case of rerun
-        for libtype in ('synthesis_libraries', 'synthesis_libraries_macros'):
-            self.set("var", libtype, [])
+        self.unset("var", "synthesis_libraries")
+        delaymodel = self.project.get("asic", "delaymodel")
 
-        delaymodel = self.schema().get("asic", "delaymodel")
-
-        # Generate synthesis_libraries and synthesis_macro_libraries for Yosys use
+        # Generate synthesis_libraries for Yosys use
         fileset_map = []
-        for lib in self.schema().get("asic", "asiclib"):
-            lib_obj = self.schema().get("library", lib, field="schema")
+        for lib in self.project.get("asic", "asiclib"):
+            lib_obj = self.project.get("library", lib, field="schema")
             for corner in self.get("var", "synthesis_corner"):
                 for fileset in lib_obj.get("asic", "libcornerfileset", corner, delaymodel):
                     fileset_map.append((lib_obj, fileset))
 
         lib_file_map = {}
-        for lib, fileset in set(fileset_map):
+        processed = set()
+        for lib, fileset in fileset_map:
+            if (lib, fileset) in processed:
+                continue
+            processed.add((lib, fileset))
             lib_content = {}
             lib_map = {}
             # Mark dont use
@@ -109,10 +104,6 @@ class _ASICTask(ASICTaskSchema, YosysTask):
             if not lib_content:
                 continue
 
-            var_name = 'synthesis_libraries'
-            if libtype == "macro":
-                var_name = 'synthesis_libraries_macros'
-
             for file, content in lib_content.items():
                 output_file = os.path.join(
                     self.nodeworkdir,
@@ -124,13 +115,32 @@ class _ASICTask(ASICTaskSchema, YosysTask):
                 with open(output_file, 'w') as f:
                     f.write(content)
 
-                self.add("var", var_name, output_file)
+                self.add("var", 'synthesis_libraries', output_file)
 
     def add_synthesis_corner(self, corner, step=None, index=None, clobber=True):
         if clobber:
             self.set("var", "synthesis_corner", corner, step=step, index=index)
         else:
             self.add("var", "synthesis_corner", corner, step=step, index=index)
+
+    @classmethod
+    def make_docs(cls):
+        from siliconcompiler import Flowgraph, Design, ASICProject
+        from siliconcompiler.scheduler import SchedulerNode
+        from siliconcompiler.targets import freepdk45_demo
+        design = Design("<design>")
+        with design.active_fileset("docs"):
+            design.set_topmodule("top")
+        proj = ASICProject(design)
+        proj.add_fileset("docs")
+        proj.load_target(freepdk45_demo.setup)
+        flow = Flowgraph("docsflow")
+        flow.node("<step>", cls(), index="<index>")
+        proj.set_flow(flow)
+
+        node = SchedulerNode(proj, "<step>", "<index>")
+        node.setup()
+        return node.task
 
 
 class ASICSynthesis(_ASICTask, YosysTask):
@@ -291,8 +301,8 @@ class ASICSynthesis(_ASICTask, YosysTask):
         self.add_required_key("asic", "asiclib")
         self.add_required_key("asic", "delaymodel")
 
-        design = self.schema().design
-        fileset = self.schema().get("option", "fileset")[0]
+        design = self.project.design
+        fileset = self.project.get("option", "fileset")[0]
 
         if f"{self.design_topmodule}.v" in self.get_files_from_input_nodes():
             self.add_input_file(ext="v")
@@ -314,15 +324,15 @@ class ASICSynthesis(_ASICTask, YosysTask):
         self.add_output_file(ext="vg", clobber=True)
         self.add_output_file(ext="netlist.json")
 
-        mainlib = self.schema().get("library", self.schema().get("asic", "mainlib"), field="schema")
+        mainlib = self.project.get("library", self.project.get("asic", "mainlib"), field="schema")
 
         if self.get('var', 'abc_constraint_driver') is not None:
-            self.add_required_tool_key("var", "abc_constraint_driver")
+            self.add_required_key("var", "abc_constraint_driver")
         else:
             lib_driver = mainlib.get("tool", "yosys", "driver_cell")
             if lib_driver:
                 self.add_required_key(mainlib, "tool", "yosys", "driver_cell")
-                self.add_required_tool_key("var", "abc_constraint_driver")
+                self.add_required_key("var", "abc_constraint_driver")
                 self.set("var", "abc_constraint_driver", lib_driver)
 
     def pre_process(self):
@@ -337,7 +347,6 @@ class ASICSynthesis(_ASICTask, YosysTask):
         if abc_clock_period:
             self.set("var", "abc_clock_period", abc_clock_period)
 
-        self._prepare_synthesis_libraries()
         self._create_abc_synthesis_constraints()
 
     def _get_abc_period(self):
@@ -363,8 +372,8 @@ class ASICSynthesis(_ASICTask, YosysTask):
         return period
 
     def _get_clock_period(self):
-        mainlib = self.schema().get("asic", "mainlib")
-        clock_units_multiplier = self.schema().get("library", mainlib, field="schema").get(
+        mainlib = self.project.get("asic", "mainlib")
+        clock_units_multiplier = self.project.get("library", mainlib, field="schema").get(
             "tool", "yosys", "abc_clock_multiplier") / 1000
 
         _, period = self.get_clock()

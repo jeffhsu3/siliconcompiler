@@ -3,19 +3,19 @@ import pytest
 
 import os.path
 
-from siliconcompiler import ASICProject, DesignSchema, FlowgraphSchema
+from siliconcompiler import ASICProject, Design, Flowgraph
 from siliconcompiler.tools.opensta import timing
 
 from siliconcompiler.targets import freepdk45_demo
 
-from tools.inputimporter import importer
+from tools.inputimporter import ImporterTask
 
 
 @pytest.mark.eda
 @pytest.mark.quick
 @pytest.mark.ready
 def test_opensta(datadir):
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     design.set_dataroot("root", datadir)
     with design.active_dataroot("root"), design.active_fileset("rtl"):
         design.set_topmodule("foo")
@@ -26,7 +26,7 @@ def test_opensta(datadir):
     proj.add_fileset(["rtl", "sdc"])
     proj.load_target(freepdk45_demo.setup)
 
-    flow = FlowgraphSchema("timing")
+    flow = Flowgraph("timing")
     flow.node("opensta", timing.TimingTask())
     proj.set_flow(flow)
 
@@ -34,15 +34,15 @@ def test_opensta(datadir):
     assert proj.run()
 
     # Check that the setup and hold slacks are the expected values.
-    assert proj.get('metric', 'setupslack', step='opensta', index='0') == -0.220
-    assert proj.get('metric', 'holdslack', step='opensta', index='0') == 0.050
+    assert proj.history("job0").get('metric', 'setupslack', step='opensta', index='0') == -0.220
+    assert proj.history("job0").get('metric', 'holdslack', step='opensta', index='0') == 0.050
 
 
 @pytest.mark.eda
 @pytest.mark.quick
 @pytest.mark.ready
 def test_opensta_sdf(datadir):
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     design.set_dataroot("root", datadir)
     with design.active_dataroot("root"), design.active_fileset("rtl"):
         design.set_topmodule("foo")
@@ -53,18 +53,18 @@ def test_opensta_sdf(datadir):
     proj.add_fileset(["rtl", "sdc"])
     proj.load_target(freepdk45_demo.setup)
 
-    flow = FlowgraphSchema("timing")
-    flow.node('import', importer.ImporterTask())
+    flow = Flowgraph("timing")
+    flow.node('import', ImporterTask())
     flow.node("opensta", timing.TimingTask())
     flow.edge('import', 'opensta')
     proj.set_flow(flow)
 
-    proj.get_task(filter=importer.ImporterTask).set("var", "input_files",
-                                                    os.path.join(datadir, 'lec', 'foo.typical.sdf'))
+    proj.get_task(filter=ImporterTask).set("var", "input_files",
+                                           os.path.join(datadir, 'lec', 'foo.typical.sdf'))
 
     # Check that OpenSTA ran successfully
     assert proj.run()
 
     # Check that the setup and hold slacks are the expected values.
-    assert proj.get('metric', 'setupslack', step='opensta', index='0') == -0.890
-    assert proj.get('metric', 'holdslack', step='opensta', index='0') == 0.020
+    assert proj.history("job0").get('metric', 'setupslack', step='opensta', index='0') == -0.890
+    assert proj.history("job0").get('metric', 'holdslack', step='opensta', index='0') == 0.020

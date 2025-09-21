@@ -1,4 +1,4 @@
-from siliconcompiler import TaskSchema
+from siliconcompiler.tool import TaskSchema
 
 
 class CompileTask(TaskSchema):
@@ -36,29 +36,29 @@ class CompileTask(TaskSchema):
 
         self.add_required_key("option", "design")
         self.add_required_key("option", "fileset")
-        if self.schema().get("option", "alias"):
+        if self.project.get("option", "alias"):
             self.add_required_key("option", "alias")
 
         # Mark required
-        for lib, fileset in self.schema().get_filesets():
-            if lib.get("fileset", fileset, "idir"):
+        for lib, fileset in self.project.get_filesets():
+            if lib.has_idir(fileset):
                 self.add_required_key(lib, "fileset", fileset, "idir")
             if lib.get("fileset", fileset, "define"):
                 self.add_required_key(lib, "fileset", fileset, "define")
-            if lib.get_file(fileset=fileset, filetype="commandfile"):
+            if lib.has_file(fileset=fileset, filetype="commandfile"):
                 self.add_required_key(lib, "fileset", fileset, "file", "commandfile")
-            if lib.get_file(fileset=fileset, filetype="systemverilog"):
+            if lib.has_file(fileset=fileset, filetype="systemverilog"):
                 self.add_required_key(lib, "fileset", fileset, "file", "systemverilog")
-            if lib.get_file(fileset=fileset, filetype="verilog"):
+            if lib.has_file(fileset=fileset, filetype="verilog"):
                 self.add_required_key(lib, "fileset", fileset, "file", "verilog")
 
-        fileset = self.schema().get("option", "fileset")[0]
-        design = self.schema().design
+        fileset = self.project.get("option", "fileset")[0]
+        design = self.project.design
         for param in design.getkeys("fileset", fileset, "param"):
             self.add_required_key(design, "fileset", fileset, "param", param)
 
         if self.get("var", "verilog_generation"):
-            self.add_required_tool_key("var", "verilog_generation")
+            self.add_required_key("var", "verilog_generation")
 
     def runtime_options(self):
         options = super().runtime_options()
@@ -70,16 +70,16 @@ class CompileTask(TaskSchema):
         if verilog_gen:
             options.append(f'-g{verilog_gen}')
 
-        filesets = self.schema().get_filesets()
+        filesets = self.project.get_filesets()
         idirs = []
         defines = []
         params = []
         for lib, fileset in filesets:
-            idirs.extend(lib.find_files("fileset", fileset, "idir"))
+            idirs.extend(lib.get_idir(fileset))
             defines.extend(lib.get("fileset", fileset, "define"))
-        fileset = self.schema().get("option", "fileset")[0]
+        fileset = self.project.get("option", "fileset")[0]
 
-        design = self.schema().design
+        design = self.project.design
         for param in design.getkeys("fileset", fileset, "param"):
             params.append((param, design.get("fileset", fileset, "param", param)))
 

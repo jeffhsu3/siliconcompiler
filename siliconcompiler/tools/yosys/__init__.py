@@ -20,16 +20,16 @@ from typing import List, Union
 
 from siliconcompiler import sc_open
 
-from siliconcompiler import StdCellLibrarySchema
-from siliconcompiler import FPGASchema
-from siliconcompiler import TaskSchema
+from siliconcompiler import StdCellLibrary
+from siliconcompiler import FPGA
+from siliconcompiler.tool import TaskSchema
 
 
-class YosysStdCellLibrary(StdCellLibrarySchema):
+class YosysStdCellLibrary(StdCellLibrary):
     """
     Schema for a standard cell library specifically for the Yosys tool.
 
-    This class extends the base StdCellLibrarySchema to define and manage
+    This class extends the base StdCellLibrary to define and manage
     a variety of tool-specific parameters required by Yosys for synthesis
     and technology mapping.
     """
@@ -123,9 +123,7 @@ class YosysStdCellLibrary(StdCellLibrarySchema):
             map (str): The file path for the mapping.
             dataroot (str, optional): The data root directory. Defaults to the active package.
         """
-        if not dataroot:
-            dataroot = self._get_active("package")
-        with self.active_dataroot(dataroot):
+        with self.active_dataroot(self._get_active_dataroot(dataroot)):
             self.set("tool", "yosys", "tristatebuffermap", map)
 
     def set_yosys_adder_map(self, map: str, dataroot: str = None):
@@ -136,9 +134,7 @@ class YosysStdCellLibrary(StdCellLibrarySchema):
             map (str): The file path for the mapping.
             dataroot (str, optional): The data root directory. Defaults to the active package.
         """
-        if not dataroot:
-            dataroot = self._get_active("package")
-        with self.active_dataroot(dataroot):
+        with self.active_dataroot(self._get_active_dataroot(dataroot)):
             self.set("tool", "yosys", "addermap", map)
 
     def add_yosys_tech_map(self,
@@ -154,9 +150,7 @@ class YosysStdCellLibrary(StdCellLibrarySchema):
             dataroot (str, optional): The data root directory. Defaults to the active package.
             clobber (bool, optional): If True, replaces the current value. Defaults to False.
         """
-        if not dataroot:
-            dataroot = self._get_active("package")
-        with self.active_dataroot(dataroot):
+        with self.active_dataroot(self._get_active_dataroot(dataroot)):
             if clobber:
                 self.set("tool", "yosys", "techmap", map)
             else:
@@ -189,11 +183,11 @@ class YosysStdCellLibrary(StdCellLibrarySchema):
             self.add("tool", "yosys", "blackbox_fileset", fileset)
 
 
-class YosysFPGA(FPGASchema):
+class YosysFPGA(FPGA):
     """
     Schema for defining FPGA-specific parameters for the Yosys tool.
 
-    This class extends the base FPGASchema to manage various configurations
+    This class extends the base FPGA to manage various configurations
     and technology-specific files required for synthesizing designs onto
     an FPGA using Yosys, including macro libraries, technology maps, and
     feature sets.
@@ -236,9 +230,7 @@ class YosysFPGA(FPGASchema):
             file (str): The path to the configuration file.
             dataroot (str, optional): The data root directory. Defaults to the active package.
         """
-        if not dataroot:
-            dataroot = self._get_active("package")
-        with self.active_dataroot(dataroot):
+        with self.active_dataroot(self._get_active_dataroot(dataroot)):
             return self.set("tool", "yosys", "fpga_config", file)
 
     def add_yosys_macrolib(self, file: Union[str, List[str]], dataroot: str = None,
@@ -252,9 +244,7 @@ class YosysFPGA(FPGASchema):
             clobber (bool, optional): If True, overwrites the existing list with the new file(s).
                                       If False, appends the file(s) to the list. Defaults to False.
         """
-        if not dataroot:
-            dataroot = self._get_active("package")
-        with self.active_dataroot(dataroot):
+        with self.active_dataroot(self._get_active_dataroot(dataroot)):
             if clobber:
                 return self.set("tool", "yosys", "macrolib", file)
             else:
@@ -271,9 +261,7 @@ class YosysFPGA(FPGASchema):
             clobber (bool, optional): If True, overwrites the existing list with the new file(s).
                                       If False, appends the file(s) to the list. Defaults to False.
         """
-        if not dataroot:
-            dataroot = self._get_active("package")
-        with self.active_dataroot(dataroot):
+        with self.active_dataroot(self._get_active_dataroot(dataroot)):
             if clobber:
                 return self.set("tool", "yosys", "extractlib", file)
             else:
@@ -289,9 +277,7 @@ class YosysFPGA(FPGASchema):
                 Defaults to None.
             dataroot (str, optional): The data root directory. Defaults to the active package.
         """
-        if not dataroot:
-            dataroot = self._get_active("package")
-        with self.active_dataroot(dataroot):
+        with self.active_dataroot(self._get_active_dataroot(dataroot)):
             self.set("tool", "yosys", "dsp_techmap", file)
         if options:
             self.set("tool", "yosys", "dsp_options", options)
@@ -305,9 +291,7 @@ class YosysFPGA(FPGASchema):
             techmap (str, optional): The path to the memory technology map file. Defaults to None.
             dataroot (str, optional): The data root directory. Defaults to the active package.
         """
-        if not dataroot:
-            dataroot = self._get_active("package")
-        with self.active_dataroot(dataroot):
+        with self.active_dataroot(self._get_active_dataroot(dataroot)):
             if libmap:
                 self.set("tool", "yosys", "memory_libmap", libmap)
             if techmap:
@@ -321,9 +305,7 @@ class YosysFPGA(FPGASchema):
             file (str, optional): The path to the flip-flop technology map file. Defaults to None.
             dataroot (str, optional): The data root directory. Defaults to the active package.
         """
-        if not dataroot:
-            dataroot = self._get_active("package")
-        with self.active_dataroot(dataroot):
+        with self.active_dataroot(self._get_active_dataroot(dataroot)):
             return self.set("tool", "yosys", "flop_techmap", file)
 
     def add_yosys_featureset(self, feature: Union[str, List[str]] = None, clobber: bool = False):

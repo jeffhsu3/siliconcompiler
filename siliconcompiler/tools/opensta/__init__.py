@@ -9,7 +9,9 @@ Installation: https://github.com/The-OpenROAD-Project/OpenSTA (also installed wi
 '''
 
 
-from siliconcompiler import TaskSchema
+from siliconcompiler.tool import TaskSchema
+
+from siliconcompiler import FPGA
 
 
 class OpenSTATask(TaskSchema):
@@ -46,3 +48,57 @@ class OpenSTATask(TaskSchema):
         options.extend(["-threads", self.get_threads()])
 
         return options
+
+    @classmethod
+    def make_docs(cls):
+        from siliconcompiler import Flowgraph, Design, ASICProject
+        from siliconcompiler.scheduler import SchedulerNode
+        from siliconcompiler.targets import freepdk45_demo
+        design = Design("<design>")
+        with design.active_fileset("docs"):
+            design.set_topmodule("top")
+        proj = ASICProject(design)
+        proj.add_fileset("docs")
+        proj.load_target(freepdk45_demo.setup)
+        flow = Flowgraph("docsflow")
+        flow.node("<step>", cls(), index="<index>")
+        proj.set_flow(flow)
+
+        node = SchedulerNode(proj, "<step>", "<index>")
+        node.setup()
+        return node.task
+
+
+class OpenSTAFPGA(FPGA):
+    """
+    Schema for defining library parameters specifically for the
+    OpenSTA tool when targeting an FPGA.
+
+    This class extends the base FPGA to manage various settings
+    related to OpenSTA, specifically for passing liberty filesets.
+    """
+    def __init__(self):
+        super().__init__()
+
+        self.define_tool_parameter("opensta", "liberty_filesets", "{str}",
+                                   "A set of liberty filesets to read to perform STA.")
+
+    def add_opensta_liberty_fileset(self, fileset: str = None, clobber: bool = False):
+        """
+        Adds the given fileset to the set of liberty files which will be used
+        for STA.
+
+        Args:
+            fileset (str): name of the fileset
+            clobber (bool, optional): If True, overwrites existing list.
+                                      If False, adds to the list. Defaults to False.
+        """
+        if not fileset:
+            fileset = self._get_active("fileset")
+
+        self._assert_fileset(fileset)
+
+        if clobber:
+            return self.set("tool", "opensta", "liberty_filesets", fileset)
+        else:
+            return self.add("tool", "opensta", "liberty_filesets", fileset)

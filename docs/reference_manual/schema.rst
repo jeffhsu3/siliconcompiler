@@ -104,53 +104,103 @@ Default values for each field are stored under the special keys ``"default", "de
     value
         Parameter value
 
-Parameters
------------------------------
+Project Parameters
+------------------
 
-.. schemagen::
+.. schema::
+  :root: siliconcompiler/Project
+  :add_class:
+  :schema_only:
+  :ref_root: Project
 
-Nested Schemas
-----------------
+.. schema::
+  :root: siliconcompiler/ASICProject
+  :add_class:
+  :schema_only:
+  :ref_root: ASICProject
 
-The SC schema has two special top-level categories that store nested subsets of the schema rather than unique parameters.
+.. schema::
+  :root: siliconcompiler/FPGAProject
+  :add_class:
+  :schema_only:
+  :ref_root: FPGAProject
 
-history
-+++++++
+.. schema::
+  :root: siliconcompiler/LintProject
+  :add_class:
+  :schema_only:
+  :ref_root: LintProject
 
-The "history" prefix stores configuration from past runs, indexed by jobname.
-Values are stored automatically at the end of :meth:`run()`, and only parameters tagged with the 'job' scope are stored.
-This can be used to go back and inspect the results of old runs.
-As a shortcut for accessing these stored values, most of the schema access functions support an optional ``job`` keyword arg.
-For example, the following line returns the number of errors from a synthesis step run as part of a job called "job0"::
+.. schema::
+  :root: siliconcompiler/SimProject
+  :add_class:
+  :schema_only:
+  :ref_root: SimProject
 
-    chip.get('metric', 'error', job='job0', step='syn', index='0')
+Library Parameters
+------------------
 
-library
-+++++++
+General
+^^^^^^^
 
-The "library" prefix stores the schema parameters of library chip objects that have been imported into the current chip object, keyed by library name.
-These values are accessed directly using the schema access functions.
-For example, the following line returns the path to a LEF file associated with a library called "mylib"::
+.. schema::
+  :root: siliconcompiler/Design
+  :add_class:
+  :schema_only:
+  :ref_root: Design
 
-    chip.find_files('library', 'mylib', 'output', stackup, 'lef')
+.. schema::
+  :root: siliconcompiler.library/LibrarySchema
+  :add_class:
+  :schema_only:
+  :ref_root: LibrarySchema
+
+.. schema::
+  :root: siliconcompiler/Schematic
+  :add_class:
+  :schema_only:
+  :ref_root: Schematic
+
+ASIC Specific
+^^^^^^^^^^^^^
+
+.. schema::
+  :root: siliconcompiler/StdCellLibrary
+  :add_class:
+  :schema_only:
+  :ref_root: StdCellLibrary
+
+.. schema::
+  :root: siliconcompiler/PDK
+  :add_class:
+  :schema_only:
+  :ref_root: PDK
+
+FPGA Specific
+^^^^^^^^^^^^^
+.. schema::
+  :root: siliconcompiler/FPGA
+  :add_class:
+  :schema_only:
+  :ref_root: FPGA
+
 
 meta data
-++++++++++
+---------
 
-The schema can record the class type of a section in the schema., this is recorded in cfg['__meta__'].
-The cfg['__meta__'] contains two keys, `sctype` and `class` , which represent the type of the section and exact python class respectively.
-If no cfg['__meta__'] is found, the section is assumed to be a regular schema class.
+The schema can record the class type of a section in the schema., this is recorded in ``cfg['__meta__']``.
+The ``cfg['__meta__']`` contains two keys, ``sctype`` and ``class`` , which represent the type of the section and exact python class respectively.
+If no ``cfg['__meta__']`` is found, the section is assumed to be a regular schema class.
 
 
 Journaling
-++++++++++
+----------
 
 The schema can support tracking of schema transactions which modify the data in the schema.
-The transactions are recorded in the schema in cfg['__journal__'], which is a list of the transactions since recording began.
+The transactions are recorded in the schema in ``cfg['__journal__']``, which is a list of the transactions since recording began.
 Each record for the journal contains:
 
 .. glossary::
-
     type
         Type of transactions performed, can be one of: set, add, remove, and unset
 
@@ -168,12 +218,3 @@ Each record for the journal contains:
 
     index
         Index that was modified, in record types which are destructive, this is None
-
-
-To control the journaling:
-
-.. code-block:: python
-
-    chip.schema._start_journal()  # To start recording transactions
-    chip.schema._stop_journal()  # To stop recording transactions and remove all records of transactions
-    chip.schema._import_journal(other_schema)  # To import and playback transactions, usually used to merge together a node manifest with the main manifest in SiliconCompiler

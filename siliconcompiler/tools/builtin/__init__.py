@@ -5,7 +5,7 @@ import shutil
 
 from siliconcompiler import NodeStatus
 
-from siliconcompiler import TaskSchema
+from siliconcompiler.tool import TaskSchema
 from siliconcompiler import utils
 
 
@@ -40,6 +40,28 @@ class BuiltinTask(TaskSchema):
         shutil.copytree('inputs', 'outputs', dirs_exist_ok=True,
                         copy_function=utils.link_symlink_copy)
 
+    @classmethod
+    def make_docs(cls):
+        from siliconcompiler import Flowgraph, Design, Project
+        from siliconcompiler.scheduler import SchedulerNode
+        from siliconcompiler.tools.builtin.nop import NOPTask
+        design = Design("<design>")
+        with design.active_fileset("docs"):
+            design.set_topmodule("top")
+        proj = Project(design)
+        proj.add_fileset("docs")
+        flow = Flowgraph("docsflow")
+        flow.node("<in>", NOPTask())
+        flow.node("<step>", cls(), index="<index>")
+        flow.edge("<in>", "<step>", head_index="<index>")
+        flow.set("<step>", "<index>", "args", "errors==0")
+        proj.set_flow(flow)
+
+        proj.get_task(filter=NOPTask).add_output_file("<top>.v", step="<in>", index="0")
+        node = SchedulerNode(proj, "<step>", "<index>")
+        node.setup()
+        return node.task
+
 
 class MinMaxBuiltinTask(BuiltinTask):
     def task(self):
@@ -63,13 +85,13 @@ class MinMaxBuiltinTask(BuiltinTask):
                 failed[step] = {}
             failed[step][index] = False
 
-            if self.schema("record").get('status', step=step, index=index) == NodeStatus.ERROR:
+            if self.schema_record.get('status', step=step, index=index) == NodeStatus.ERROR:
                 failed[step][index] = True
             else:
-                for metric in self.schema("metric").getkeys():
-                    if self.schema("flow").valid(step, index, 'goal', metric):
-                        goal = self.schema("flow").get(step, index, 'goal', metric)
-                        real = self.schema("metric").get(metric, step=step, index=index)
+                for metric in self.schema_metric.getkeys():
+                    if self.schema_flow.valid(step, index, 'goal', metric):
+                        goal = self.schema_flow.get(step, index, 'goal', metric)
+                        real = self.schema_metric.get(metric, step=step, index=index)
                         if real is None:
                             raise ValueError(
                                 f'Metric {metric} has goal for {step}/{index} '
@@ -83,12 +105,12 @@ class MinMaxBuiltinTask(BuiltinTask):
         # Calculate max/min values for each metric
         max_val = {}
         min_val = {}
-        for metric in self.schema("metric").getkeys():
+        for metric in self.schema_metric.getkeys():
             max_val[metric] = 0
             min_val[metric] = float("inf")
             for step, index in nodelist:
                 if not failed[step][index]:
-                    real = self.schema("metric").get(metric, step=step, index=index)
+                    real = self.schema_metric.get(metric, step=step, index=index)
                     if real is None:
                         continue
                     max_val[metric] = max(max_val[metric], real)
@@ -102,13 +124,13 @@ class MinMaxBuiltinTask(BuiltinTask):
                 continue
 
             score = 0.0
-            for metric in self.schema("flow").getkeys(step, index, 'weight'):
-                weight = self.schema("flow").get(step, index, 'weight', metric)
+            for metric in self.schema_flow.getkeys(step, index, 'weight'):
+                weight = self.schema_flow.get(step, index, 'weight', metric)
                 if not weight:
                     # skip if weight is 0 or None
                     continue
 
-                real = self.schema("metric").get(metric, step=step, index=index)
+                real = self.schema_metric.get(metric, step=step, index=index)
                 if real is None:
                     raise ValueError(
                         f'Metric {metric} has weight for {step}/{index} '

@@ -1,4 +1,4 @@
-from siliconcompiler import TaskSchema
+from siliconcompiler.tool import TaskSchema
 
 
 class APRTask(TaskSchema):
@@ -34,18 +34,18 @@ class APRTask(TaskSchema):
         self.add_output_file(ext="asc")
 
         self.add_required_key("fpga", "device")
-        self.add_required_key("library", self.schema().get("fpga", "device"), "fpga", "partname")
+        self.add_required_key("library", self.project.get("fpga", "device"), "fpga", "partname")
 
         # Mark required
-        for lib, fileset in self.schema().get_filesets():
-            if lib.get_file(fileset=fileset, filetype="pcf"):
+        for lib, fileset in self.project.get_filesets():
+            if lib.has_file(fileset=fileset, filetype="pcf"):
                 self.add_required_key(lib, "fileset", fileset, "file", "pcf")
 
     def runtime_options(self):
         options = super().runtime_options()
 
-        partname = self.schema().get("library",
-                                     self.schema().get("fpga", "device"), "fpga", "partname")
+        partname = self.project.get("library",
+                                    self.project.get("fpga", "device"), "fpga", "partname")
 
         options.extend(['--json', f'inputs/{self.design_topmodule}.netlist.json'])
         options.extend(['--asc', f'outputs/{self.design_topmodule}.asc'])
@@ -53,8 +53,26 @@ class APRTask(TaskSchema):
         if partname == 'ice40up5k-sg48':
             options.extend(['--up5k', '--package', 'sg48'])
 
-        for lib, fileset in self.schema().get_filesets():
+        for lib, fileset in self.project.get_filesets():
             for pcf in lib.get_file(fileset=fileset, filetype="pcf"):
                 options.extend(['--pcf', pcf])
 
         return options
+
+    @classmethod
+    def make_docs(cls):
+        from siliconcompiler import Flowgraph, Design, FPGAProject, FPGA
+        from siliconcompiler.scheduler import SchedulerNode
+        design = Design("<design>")
+        with design.active_fileset("docs"):
+            design.set_topmodule("top")
+        proj = FPGAProject(design)
+        proj.add_fileset("docs")
+        flow = Flowgraph("docsflow")
+        flow.node("<step>", cls(), index="<index>")
+        proj.set_flow(flow)
+        proj.set_fpga(FPGA("<fpga>"))
+
+        node = SchedulerNode(proj, "<step>", "<index>")
+        node.setup()
+        return node.task

@@ -2,10 +2,11 @@ from siliconcompiler.tools.openroad import rcx_bench
 from siliconcompiler.tools.openroad import rcx_extract
 from siliconcompiler.tools.builtin import nop
 
-from siliconcompiler import FlowgraphSchema, TaskSchema
+from siliconcompiler import Flowgraph
+from siliconcompiler.tool import TaskSchema
 
 
-class GenerateOpenRCXFlow(FlowgraphSchema):
+class GenerateOpenRCXFlow(Flowgraph):
     '''A flow to generate OpenRCX parasitic extraction decks for OpenROAD.
 
     This flow automates the process of characterizing a parasitic extraction
@@ -15,6 +16,7 @@ class GenerateOpenRCXFlow(FlowgraphSchema):
     calibrating OpenRCX accordingly.
 
     The flow consists of the following main steps for each specified corner:
+
     1. **bench**: A benchmark design with simple structures is created.
     2. **pex**: A user-provided third-party PEX tool is run on the benchmark
        to generate a "golden" SPEF file.
@@ -68,6 +70,12 @@ class GenerateOpenRCXFlow(FlowgraphSchema):
                     prev_index = n - 1
 
                 self.edge(prev, 'pex', head_index=n, tail_index=prev_index)
+
+    @classmethod
+    def make_docs(cls):
+        from siliconcompiler.tools.builtin.nop import NOPTask
+        return [GenerateOpenRCXFlow(NOPTask(), corners=3, serial_extraction=False),
+                GenerateOpenRCXFlow(NOPTask(), corners=3, serial_extraction=True)]
 
 
 ##################################################

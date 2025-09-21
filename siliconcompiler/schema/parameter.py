@@ -10,6 +10,7 @@ import re
 import shlex
 
 from enum import Enum
+from typing import Tuple
 
 from .parametervalue import NodeValue, DirectoryNodeValue, FileNodeValue, NodeListValue, \
     NodeSetValue
@@ -69,7 +70,7 @@ class Parameter:
                  type,
                  require=False,
                  defvalue=None,
-                 scope=Scope.JOB,
+                 scope=Scope.GLOBAL,
                  copy=False,
                  lock=False,
                  hashalgo='sha256',
@@ -156,6 +157,76 @@ class Parameter:
 
     def __str__(self):
         return str(self.getvalues())
+
+    def _generate_doc(self, doc,
+                      ref_root: str = "",
+                      key_offset: Tuple[str] = None,
+                      detailed: bool = True):
+        from .docs.utils import strong, para, code, build_list, build_table
+        from docutils.statemachine import ViewList
+        from docutils import nodes
+        from sphinx.util.nodes import nested_parse_with_titles
+
+        entries = [[strong('Description'), para(self.__shorthelp)]]
+        type_str = NodeType.encode(self.__type)
+        allowed = []
+        if NodeType.contains(self.__type, NodeEnumType):
+            type_str = "enum"
+            if self.is_list():
+                type_str = "[enum]"
+                values = list(self.__type)[0].values
+            elif self.is_set():
+                type_str = "{enum}"
+                values = list(self.__type)[0].values
+            else:
+                values = self.__type.values
+            allowed = sorted(values)
+
+        entries.append([strong('Type'), para(type_str)])
+        if allowed:
+            entries.append([strong('Allowed values'), build_list([para(a) for a in allowed])])
+
+        if self.get(field='pernode').is_never():
+            entries.append([strong('Per step/index'), para(str(self.__pernode.value).lower())])
+
+        entries.append([strong('Scope'), para(str(self.__scope.value).lower())])
+
+        if self.__unit:
+            entries.append([strong('Unit'), para(self.__unit)])
+
+        entries.append([strong('Default Value'), para(self.__defvalue.get())])
+
+        switch_list = [code(switch) for switch in self.__switch]
+        if switch_list:
+            entries.append([strong('CLI Switch'), build_list(switch_list)])
+
+        examples = {}
+        for example in self.__example:
+            name, ex = example.split(':', 1)
+            examples.setdefault(name, []).append(ex)
+
+        for name, exs in examples.items():
+            examples = [code(ex.strip()) for ex in exs]
+            p = None
+            for ex in examples:
+                if not p:
+                    p = para("")
+                else:
+                    p += para("")
+                p += ex
+            entries.append([strong(f'Example ({name.upper()})'), p])
+
+        table = build_table(entries, colwidths=[25, 75])
+
+        rst = ViewList()
+        # use fake filename 'inline' for error # reporting
+        if self.__help:
+            for i, line in enumerate(self.__help.splitlines()):
+                rst.append(line, 'inline', i)
+        body = nodes.paragraph()
+        nested_parse_with_titles(doc.state, rst, body)
+
+        return [body, table]
 
     def get(self, field='value', step=None, index=None):
         """

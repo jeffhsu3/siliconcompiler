@@ -11,12 +11,12 @@ from siliconcompiler.tools.klayout import convert_drc_db
 
 from siliconcompiler.targets import freepdk45_demo
 
-from siliconcompiler import ASICProject, FlowgraphSchema, DesignSchema
+from siliconcompiler import ASICProject, Flowgraph, Design
 from siliconcompiler.scheduler import SchedulerNode
 from siliconcompiler.tools.klayout.export import ExportTask
 from siliconcompiler.tools.klayout import KLayoutLibrary
 
-from tools.inputimporter import importer
+from tools.inputimporter import ImporterTask
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ def setup_pdk_test(monkeypatch, datadir):
 @pytest.mark.quick
 @pytest.mark.ready
 def test_version(asic_gcd):
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     flow.node("version", ExportTask())
     asic_gcd.set_flow(flow)
 
@@ -50,7 +50,7 @@ def test_export(datadir):
         lib.add_file(os.path.join(datadir, 'heartbeat.lef'))
         lib.add_asic_aprfileset()
 
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("layout"):
         design.set_topmodule("heartbeat_wrapper")
 
@@ -59,14 +59,14 @@ def test_export(datadir):
     proj.load_target(freepdk45_demo.setup)
     proj.add_asiclib(lib)
 
-    flow = FlowgraphSchema("testflow")
-    flow.node('import', importer.ImporterTask())
+    flow = Flowgraph("testflow")
+    flow.node('import', ImporterTask())
     flow.node("export", export.ExportTask())
     flow.edge('import', 'export')
     proj.set_flow(flow)
 
-    proj.get_task(filter=importer.ImporterTask).set("var", "input_files",
-                                                    os.path.join(datadir, 'heartbeat_wrapper.def'))
+    proj.get_task(filter=ImporterTask).set("var", "input_files",
+                                           os.path.join(datadir, 'heartbeat_wrapper.def'))
 
     proj.get_task(filter=export.ExportTask).set("var", "timestamps", False)
 
@@ -75,14 +75,14 @@ def test_export(datadir):
     assert os.path.isfile(result)
     with open(result, 'rb') as gds_file:
         data = gds_file.read()
-        assert hashlib.md5(data).hexdigest() == 'ba8c9faa547ee5197ecafbad80e32da8'
+        assert hashlib.md5(data).hexdigest() == '033839a1f1597c15c6ce7e4de24a15d5'
 
 
 @pytest.mark.eda
 @pytest.mark.quick
 @pytest.mark.ready
 def test_klayout_operations(datadir):
-    design = DesignSchema("heartbeat")
+    design = Design("heartbeat")
     with design.active_fileset("layout"):
         design.set_topmodule("heartbeat")
 
@@ -90,16 +90,16 @@ def test_klayout_operations(datadir):
     proj.add_fileset(["layout"])
     proj.load_target(freepdk45_demo.setup)
 
-    flow = FlowgraphSchema("testflow")
-    flow.node('import', importer.ImporterTask())
+    flow = Flowgraph("testflow")
+    flow.node('import', ImporterTask())
     flow.node("ops1", operations.OperationsTask())
     flow.node("ops2", operations.OperationsTask())
     flow.edge('import', 'ops1')
     flow.edge('ops1', 'ops2')
     proj.set_flow(flow)
 
-    proj.get_task(filter=importer.ImporterTask).set("var", "input_files",
-                                                    os.path.join(datadir, 'heartbeat.gds'))
+    proj.get_task(filter=ImporterTask).set("var", "input_files",
+                                           os.path.join(datadir, 'heartbeat.gds'))
     ops: operations.OperationsTask = proj.get_task(filter=operations.OperationsTask)
     ops.set("var", "timestamps", False)
 
@@ -163,7 +163,7 @@ def test_pdk(setup_pdk_test):
 def test_drc_pass(setup_pdk_test, datadir):
     import klayout_pdk
 
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("layout"):
         design.set_topmodule("interposer")
 
@@ -173,18 +173,18 @@ def test_drc_pass(setup_pdk_test, datadir):
     proj.set_asic_delaymodel("nldm")
     proj.set_mainlib("testdesign")
 
-    flow = FlowgraphSchema("testflow")
-    flow.node('import', importer.ImporterTask())
+    flow = Flowgraph("testflow")
+    flow.node('import', ImporterTask())
     flow.node("drc", drc.DRCTask())
     flow.edge('import', 'drc')
     proj.set_flow(flow)
 
-    proj.get_task(filter=importer.ImporterTask).set(
+    proj.get_task(filter=ImporterTask).set(
         "var", "input_files", os.path.join(datadir, "klayout_pdk", 'interposer.gds'))
     proj.get_task(filter=drc.DRCTask).set("var", "drc_name", "drc")
 
     assert proj.run()
-    assert proj.get('metric', 'drcs', step='drc', index='0') == 0
+    assert proj.history("job0").get('metric', 'drcs', step='drc', index='0') == 0
 
 
 @pytest.mark.eda
@@ -193,7 +193,7 @@ def test_drc_pass(setup_pdk_test, datadir):
 def test_drc_fail(setup_pdk_test, datadir):
     import klayout_pdk
 
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("layout"):
         design.set_topmodule("interposer")
 
@@ -203,18 +203,18 @@ def test_drc_fail(setup_pdk_test, datadir):
     proj.set_asic_delaymodel("nldm")
     proj.set_mainlib("testdesign")
 
-    flow = FlowgraphSchema("testflow")
-    flow.node('import', importer.ImporterTask())
+    flow = Flowgraph("testflow")
+    flow.node('import', ImporterTask())
     flow.node("drc", drc.DRCTask())
     flow.edge('import', 'drc')
     proj.set_flow(flow)
 
-    proj.get_task(filter=importer.ImporterTask).set(
+    proj.get_task(filter=ImporterTask).set(
         "var", "input_files", os.path.join(datadir, "klayout_pdk", "withdrcs", 'interposer.gds'))
     proj.get_task(filter=drc.DRCTask).set("var", "drc_name", "drc")
 
     assert proj.run()
-    assert proj.get('metric', 'drcs', step='drc', index='0') == 12
+    assert proj.history("job0").get('metric', 'drcs', step='drc', index='0') == 12
 
 
 @pytest.mark.eda
@@ -223,7 +223,7 @@ def test_drc_fail(setup_pdk_test, datadir):
 def test_convert_drc(setup_pdk_test, datadir):
     import klayout_pdk
 
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("layout"):
         design.set_topmodule("interposer")
 
@@ -233,20 +233,20 @@ def test_convert_drc(setup_pdk_test, datadir):
     proj.set_asic_delaymodel("nldm")
     proj.set_mainlib("testdesign")
 
-    flow = FlowgraphSchema("testflow")
-    flow.node('import', importer.ImporterTask())
+    flow = Flowgraph("testflow")
+    flow.node('import', ImporterTask())
     flow.node("drc", drc.DRCTask())
     flow.node("convert", convert_drc_db.ConvertDRCDBTask())
     flow.edge('import', 'drc')
     flow.edge('drc', 'convert')
     proj.set_flow(flow)
 
-    proj.get_task(filter=importer.ImporterTask).set(
+    proj.get_task(filter=ImporterTask).set(
         "var", "input_files", os.path.join(datadir, "klayout_pdk", "withdrcs", 'interposer.gds'))
     proj.get_task(filter=drc.DRCTask).set("var", "drc_name", "drc")
 
     assert proj.run()
-    assert proj.get('metric', 'drcs', step='drc', index='0') == 12
+    assert proj.history("job0").get('metric', 'drcs', step='drc', index='0') == 12
 
     lyrdb = proj.find_result("lyrdb", step="convert", directory="inputs")
     assert os.path.isfile(lyrdb)

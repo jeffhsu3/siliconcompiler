@@ -5,10 +5,10 @@ from siliconcompiler.tools.xyce import simulate as xyce_simulate
 from siliconcompiler.tools.xdm import convert as xdm_convert
 
 
-from siliconcompiler import FlowgraphSchema
+from siliconcompiler import Flowgraph
 
 
-class DVFlow(FlowgraphSchema):
+class DVFlow(Flowgraph):
     '''
     A configurable constrained random stimulus DV flow.
 
@@ -22,6 +22,7 @@ class DVFlow(FlowgraphSchema):
     parallel.
 
     Supported tools are:
+
     * 'icarus': Compiles and simulates with the Icarus Verilog simulator.
     * 'verilator': Compiles and simulates with Verilator.
     * 'xyce': Simulates a netlist with the Xyce circuit simulator.

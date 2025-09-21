@@ -1,6 +1,7 @@
 import pytest
 
-from siliconcompiler import LibrarySchema, ToolLibrarySchema, StdCellLibrarySchema, PDKSchema
+from siliconcompiler import PDK
+from siliconcompiler.library import LibrarySchema, ToolLibrarySchema, StdCellLibrary
 from siliconcompiler.schema import PerNode, Scope
 
 
@@ -261,7 +262,7 @@ def test_define_tool_parameter_with_defvalue_file_copy_on():
 
 
 def test_stdlib_asic_keys():
-    assert StdCellLibrarySchema().allkeys("asic") == {
+    assert StdCellLibrary().allkeys("asic") == {
         ('cells', 'antenna',),
         ('cells', 'clkbuf',),
         ('cells', 'clkgate',),
@@ -283,177 +284,172 @@ def test_stdlib_asic_keys():
 
 
 def test_add_asic_libcornerfileset():
-    lib = StdCellLibrarySchema("lib")
+    lib = StdCellLibrary("lib")
     with lib.active_fileset("models"):
         lib.add_file("test.lib")
         assert lib.add_asic_libcornerfileset("slow", "nldm")
-    assert lib.get("asic", "libcornerfileset", "slow", "nldm") == set(["models"])
+    assert lib.get("asic", "libcornerfileset", "slow", "nldm") == ["models"]
 
 
 def test_add_asic_libcornerfileset_multiple():
-    lib = StdCellLibrarySchema("lib")
+    lib = StdCellLibrary("lib")
     with lib.active_fileset("models1"):
         lib.add_file("test.lib")
         assert lib.add_asic_libcornerfileset("slow", "nldm")
     with lib.active_fileset("models2"):
         lib.add_file("test.lib")
         assert lib.add_asic_libcornerfileset("slow", "nldm")
-    assert lib.get("asic", "libcornerfileset", "slow", "nldm") == set(["models1", "models2"])
+    assert lib.get("asic", "libcornerfileset", "slow", "nldm") == ["models1", "models2"]
 
 
 def test_add_asic_libcornerfileset_without_active():
-    lib = StdCellLibrarySchema("lib")
+    lib = StdCellLibrary("lib")
     with lib.active_fileset("models"):
         lib.add_file("test.lib")
     assert lib.add_asic_libcornerfileset("slow", "nldm", "models")
-    assert lib.get("asic", "libcornerfileset", "slow", "nldm") == set(["models"])
+    assert lib.get("asic", "libcornerfileset", "slow", "nldm") == ["models"]
 
 
 def test_add_asic_libcornerfileset_missing_fileset():
     with pytest.raises(LookupError, match="models is not defined in lib"):
-        StdCellLibrarySchema("lib").add_asic_libcornerfileset("slow", "nldm", "models")
+        StdCellLibrary("lib").add_asic_libcornerfileset("slow", "nldm", "models")
 
 
 def test_add_asic_libcornerfileset_invalid_model():
     with pytest.raises(TypeError, match="model must be a string"):
-        StdCellLibrarySchema("lib").add_asic_libcornerfileset("slow", 8, "models")
+        StdCellLibrary("lib").add_asic_libcornerfileset("slow", 8, "models")
 
 
 def test_add_asic_libcornerfileset_invalid_fileset():
     with pytest.raises(TypeError, match="fileset must be a string"):
-        StdCellLibrarySchema("lib").add_asic_libcornerfileset("slow", "nldm", 8)
+        StdCellLibrary("lib").add_asic_libcornerfileset("slow", "nldm", 8)
 
 
 def test_add_asic_pexcornerfileset():
-    lib = StdCellLibrarySchema("lib")
+    lib = StdCellLibrary("lib")
     with lib.active_fileset("models"):
         lib.add_file("test.sp")
-        assert lib.add_asic_pexcornerfileset("slow", "spice")
-    assert lib.get("asic", "pexcornerfileset", "slow", "spice") == set(["models"])
+        assert lib.add_asic_pexcornerfileset("slow")
+    assert lib.get("asic", "pexcornerfileset", "slow") == ["models"]
 
 
 def test_add_asic_pexcornerfileset_multiple():
-    lib = StdCellLibrarySchema("lib")
+    lib = StdCellLibrary("lib")
     with lib.active_fileset("models1"):
         lib.add_file("test.sp")
-        assert lib.add_asic_pexcornerfileset("slow", "spice")
+        assert lib.add_asic_pexcornerfileset("slow")
     with lib.active_fileset("models2"):
         lib.add_file("test.sp")
-        assert lib.add_asic_pexcornerfileset("slow", "spice")
-    assert lib.get("asic", "pexcornerfileset", "slow", "spice") == set(["models1", "models2"])
+        assert lib.add_asic_pexcornerfileset("slow")
+    assert lib.get("asic", "pexcornerfileset", "slow") == ["models1", "models2"]
 
 
 def test_add_asic_pexcornerfileset_without_active():
-    lib = StdCellLibrarySchema("lib")
+    lib = StdCellLibrary("lib")
     with lib.active_fileset("models"):
         lib.add_file("test.sp")
-    assert lib.add_asic_pexcornerfileset("slow", "spice", "models")
-    assert lib.get("asic", "pexcornerfileset", "slow", "spice") == set(["models"])
+    assert lib.add_asic_pexcornerfileset("slow", "models")
+    assert lib.get("asic", "pexcornerfileset", "slow") == ["models"]
 
 
 def test_add_asic_pexcornerfileset_missing_fileset():
     with pytest.raises(LookupError, match="models is not defined"):
-        StdCellLibrarySchema("lib").add_asic_pexcornerfileset("slow", "spice", "models")
-
-
-def test_add_asic_pexcornerfileset_invalid_model():
-    with pytest.raises(TypeError, match="model must be a string"):
-        StdCellLibrarySchema("lib").add_asic_pexcornerfileset("slow", 8, "models")
+        StdCellLibrary("lib").add_asic_pexcornerfileset("slow", "models")
 
 
 def test_add_asic_pexcornerfileset_invalid_fileset():
     with pytest.raises(TypeError, match="fileset must be a string"):
-        StdCellLibrarySchema("lib").add_asic_pexcornerfileset("slow", "spice", 8)
+        StdCellLibrary("lib").add_asic_pexcornerfileset("slow", 8)
 
 
 def test_add_asic_aprfileset():
-    lib = StdCellLibrarySchema("lib")
+    lib = StdCellLibrary("lib")
     with lib.active_fileset("models"):
         lib.add_file("test.lef")
         assert lib.add_asic_aprfileset()
-    assert lib.get("asic", "aprfileset") == set(["models"])
+    assert lib.get("asic", "aprfileset") == ["models"]
 
 
 def test_add_asic_aprfileset_multiple():
-    lib = StdCellLibrarySchema("lib")
+    lib = StdCellLibrary("lib")
     with lib.active_fileset("models1"):
         lib.add_file("test.lef")
         assert lib.add_asic_aprfileset()
     with lib.active_fileset("models2"):
         lib.add_file("test.gds")
         assert lib.add_asic_aprfileset()
-    assert lib.get("asic", "aprfileset") == set(["models1", "models2"])
+    assert lib.get("asic", "aprfileset") == ["models1", "models2"]
 
 
 def test_add_asic_aprfileset_without_active():
-    lib = StdCellLibrarySchema("lib")
+    lib = StdCellLibrary("lib")
     with lib.active_fileset("models"):
         lib.add_file("test.lef")
     assert lib.add_asic_aprfileset("models")
-    assert lib.get("asic", "aprfileset") == set(["models"])
+    assert lib.get("asic", "aprfileset") == ["models"]
 
 
 def test_add_asic_aprfileset_missing_fileset():
     with pytest.raises(LookupError, match="models is not defined"):
-        StdCellLibrarySchema("lib").add_asic_aprfileset("models")
+        StdCellLibrary("lib").add_asic_aprfileset("models")
 
 
 def test_add_asic_aprfileset_invalid_fileset():
     with pytest.raises(TypeError, match="fileset must be a string"):
-        StdCellLibrarySchema("lib").add_asic_aprfileset(8)
+        StdCellLibrary("lib").add_asic_aprfileset(8)
 
 
 def test_add_asic_celllist():
-    lib = StdCellLibrarySchema("lib")
+    lib = StdCellLibrary("lib")
     lib.add_asic_celllist("dontuse", "*X0*")
     lib.add_asic_celllist("dontuse", "*X1*")
     assert lib.get("asic", "cells", "dontuse") == ["*X0*", "*X1*"]
 
 
 def test_add_asic_site():
-    lib = StdCellLibrarySchema("lib")
+    lib = StdCellLibrary("lib")
     lib.add_asic_site("sc7p5site")
     assert lib.get("asic", "site") == ["sc7p5site"]
 
 
 def test_add_asic_pdk():
-    lib = StdCellLibrarySchema("lib")
-    pdk = PDKSchema("test")
+    lib = StdCellLibrary("lib")
+    pdk = PDK("test")
     pdk.set_stackup("10M")
     lib.add_asic_pdk(pdk)
     assert lib.get("asic", "pdk") == "test"
-    assert lib.get("asic", "stackup") == set(["10M"])
+    assert lib.get("asic", "stackup") == ["10M"]
 
 
 def test_add_asic_pdk_notdefault():
-    lib = StdCellLibrarySchema("lib")
-    pdk = PDKSchema("test")
+    lib = StdCellLibrary("lib")
+    pdk = PDK("test")
     lib.add_asic_pdk(pdk, default=False)
     assert lib.get("asic", "pdk") is None
 
 
 def test_add_asic_pdk_string():
-    lib = StdCellLibrarySchema("lib")
+    lib = StdCellLibrary("lib")
     lib.add_asic_pdk("test")
     assert lib.get("asic", "pdk") == "test"
 
 
 def test_add_asic_pdk_string_not_default():
-    lib = StdCellLibrarySchema("lib")
+    lib = StdCellLibrary("lib")
     with pytest.raises(TypeError, match="pdk must be a PDK object"):
         lib.add_asic_pdk("test", default=False)
     assert lib.get("asic", "pdk") is None
 
 
 def test_add_asic_pdk_string_invalid():
-    lib = StdCellLibrarySchema("lib")
+    lib = StdCellLibrary("lib")
     with pytest.raises(TypeError, match="pdk must be a PDK object or string"):
         lib.add_asic_pdk(1)
 
 
 def test_add_asic_stackup():
-    lib = StdCellLibrarySchema("lib")
+    lib = StdCellLibrary("lib")
     lib.add_asic_stackup("10M")
-    assert lib.get("asic", "stackup") == set(["10M"])
+    assert lib.get("asic", "stackup") == ["10M"]
     lib.add_asic_stackup("11M")
-    assert lib.get("asic", "stackup") == set(["10M", "11M"])
+    assert lib.get("asic", "stackup") == ["10M", "11M"]

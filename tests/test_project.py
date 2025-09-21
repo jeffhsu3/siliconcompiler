@@ -10,10 +10,11 @@ from PIL import Image
 from unittest.mock import patch
 
 from siliconcompiler import Project
-from siliconcompiler import DesignSchema, FlowgraphSchema, TaskSchema, \
-    ToolSchema, ChecklistSchema, LibrarySchema
+from siliconcompiler import Design, Flowgraph, Checklist
+from siliconcompiler.tool import TaskSchema, ToolSchema
+from siliconcompiler.library import LibrarySchema
 
-from siliconcompiler.schema import NamedSchema, EditableSchema, Parameter
+from siliconcompiler.schema import NamedSchema, EditableSchema, Parameter, Scope
 
 from siliconcompiler.utils.logging import SCColorLoggerFormatter, SCLoggerFormatter
 
@@ -96,7 +97,7 @@ def test_name_set_from_init():
 
 
 def test_name_set_from_init_with_design():
-    assert Project(DesignSchema("testname")).name == "testname"
+    assert Project(Design("testname")).name == "testname"
 
 
 def test_name_set_from_set_design():
@@ -117,7 +118,7 @@ def test_design_not_imported():
 
 
 def test_design():
-    design = DesignSchema("testname")
+    design = Design("testname")
     project = Project(design)
 
     assert project.design is design
@@ -131,7 +132,7 @@ def test_set_design_str():
 
 
 def test_set_design_not_valid():
-    with pytest.raises(TypeError, match="design must be string or Design object"):
+    with pytest.raises(TypeError, match="design must be a string or a Design object"):
         Project().set_design(2)
 
 
@@ -139,7 +140,7 @@ def test_set_design_obj():
     project = Project("oldname")
     assert project.name == "oldname"
 
-    design = DesignSchema("testname")
+    design = Design("testname")
     project.set_design(design)
     assert project.name == "testname"
     assert project.design is design
@@ -152,13 +153,13 @@ def test_set_flow_str():
 
 
 def test_set_flow_not_valid():
-    with pytest.raises(TypeError, match="flow must be string or Flowgraph object"):
+    with pytest.raises(TypeError, match="flow must be a string or a Flowgraph object"):
         Project().set_flow(2)
 
 
 def test_set_flow_obj():
     project = Project()
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     project.set_flow(flow)
     assert project.get("option", "flow") == "testflow"
     assert project.get("flowgraph", "testflow", field="schema") is flow
@@ -273,7 +274,7 @@ def test_history_missing():
 
 
 def test_add_fileset():
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
     with design.active_fileset("rtl.other"):
@@ -286,7 +287,7 @@ def test_add_fileset():
 
 
 def test_add_fileset_list():
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
     with design.active_fileset("rtl.other"):
@@ -297,14 +298,14 @@ def test_add_fileset_list():
 
 
 def test_add_fileset_list_invalid():
-    design = DesignSchema("test")
+    design = Design("test")
     proj = Project(design)
     with pytest.raises(TypeError, match="fileset must be a string"):
         proj.add_fileset(["rtl", 1])
 
 
 def test_add_fileset_clobber():
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
     with design.active_fileset("rtl.other"):
@@ -317,14 +318,14 @@ def test_add_fileset_clobber():
 
 
 def test_add_fileset_invalid_type():
-    design = DesignSchema("test")
+    design = Design("test")
     proj = Project(design)
     with pytest.raises(TypeError, match="fileset must be a string"):
         proj.add_fileset(1)
 
 
 def test_add_fileset_invalid():
-    design = DesignSchema("test")
+    design = Design("test")
     proj = Project(design)
     with pytest.raises(ValueError, match="rtl is not a valid fileset in test"):
         proj.add_fileset("rtl")
@@ -343,7 +344,7 @@ def test_convert():
 
             EditableSchema(self).insert("fpga", Parameter("str"))
 
-    design = DesignSchema("design0")
+    design = Design("design0")
     proj0 = ASICProject(design)
 
     proj1 = FPGAProject.convert(proj0)
@@ -358,11 +359,34 @@ def test_convert_invalid():
 
 
 def test_add_dep_design():
-    design = DesignSchema("test")
+    design = Design("test")
     proj = Project()
     proj.add_dep(design)
     assert proj.getkeys("library") == ("test",)
     assert proj.get("library", "test", field="schema") is design
+
+
+def test_add_dep_self_reference():
+    class Heartbeat(Design):
+        def __init__(self):
+            super().__init__('heartbeat')
+
+            with self.active_fileset("rtl.increment"):
+                self.add_file("increment.v")
+
+            with self.active_fileset("rtl"):
+                self.add_file("heartbeat_increment.v")
+                self.add_depfileset(self, "rtl.increment")
+
+            with self.active_fileset("testbench"):
+                self.add_file("tb.v")
+
+    dut = Heartbeat()
+
+    proj = Project()
+    proj.add_dep(dut)
+    assert proj.getkeys("library") == ("heartbeat",)
+    assert proj.get("library", "heartbeat", field="schema") is dut
 
 
 def test_add_dep_invalid():
@@ -371,8 +395,8 @@ def test_add_dep_invalid():
 
 
 def test_add_dep_list():
-    design0 = DesignSchema("test0")
-    design1 = DesignSchema("test1")
+    design0 = Design("test0")
+    design1 = Design("test1")
     proj = Project()
     proj.add_dep([design0, design1])
     assert proj.getkeys("library") == ("test0", "test1")
@@ -381,8 +405,8 @@ def test_add_dep_list():
 
 
 def test_add_dep_design_with_deps():
-    dep = DesignSchema("test0")
-    design = DesignSchema("test")
+    dep = Design("test0")
+    design = Design("test")
     design.add_dep(dep)
 
     proj = Project()
@@ -394,10 +418,10 @@ def test_add_dep_design_with_deps():
 
 
 def test_add_dep_design_with_2level_dep():
-    dep = DesignSchema("test0")
-    dep.add_dep(DesignSchema("test1"))
-    design = DesignSchema("test")
-    design.add_dep(DesignSchema("test1"))
+    dep = Design("test0")
+    dep.add_dep(Design("test1"))
+    design = Design("test")
+    design.add_dep(Design("test1"))
     design.add_dep(dep)
 
     design_test1 = design.get_dep("test1")
@@ -416,7 +440,7 @@ def test_add_dep_design_with_2level_dep():
 
 
 def test_add_dep_flowgraph():
-    flow = FlowgraphSchema("test")
+    flow = Flowgraph("test")
     proj = Project()
     proj.add_dep(flow)
     assert proj.getkeys("flowgraph") == ("test",)
@@ -424,7 +448,7 @@ def test_add_dep_flowgraph():
 
 
 def test_add_dep_checklist():
-    checklist = ChecklistSchema("test")
+    checklist = Checklist("test")
     proj = Project()
     proj.add_dep(checklist)
     assert proj.getkeys("checklist") == ("test",)
@@ -440,14 +464,14 @@ def test_add_dep_library():
 
 
 def test_get_filesets_empty():
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
     assert Project(design).get_filesets() == []
 
 
 def test_get_filesets_single():
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
     proj = Project(design)
@@ -458,11 +482,11 @@ def test_get_filesets_single():
 
 
 def test_get_filesets_with_deps():
-    dep = DesignSchema("dep")
+    dep = Design("dep")
     with dep.active_fileset("rtl.dep"):
         dep.set_topmodule("top")
 
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
         design.add_depfileset(dep, "rtl.dep")
@@ -482,7 +506,7 @@ def test_add_alias_invalid_src_type():
 
 
 def test_add_alias_src_name_not_loaded():
-    dst = DesignSchema("dst")
+    dst = Design("dst")
     with dst.active_fileset("rtl"):
         dst.set_topmodule("top")
 
@@ -496,10 +520,10 @@ def test_add_alias_src_name_not_loaded():
 
 
 def test_add_alias_src_dep_not_loaded():
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
-    dst = DesignSchema("dst")
+    dst = Design("dst")
     with dst.active_fileset("rtl"):
         dst.set_topmodule("top")
 
@@ -513,7 +537,7 @@ def test_add_alias_src_dep_not_loaded():
 
 
 def test_add_alias_src_invalid_fileset():
-    design = DesignSchema("test")
+    design = Design("test")
 
     proj = Project(design)
     with pytest.raises(ValueError, match="test does not have rtl as a fileset"):
@@ -521,7 +545,7 @@ def test_add_alias_src_invalid_fileset():
 
 
 def test_add_alias_src_name_type():
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
 
@@ -532,7 +556,7 @@ def test_add_alias_src_name_type():
 
 
 def test_add_alias_invalid_dst_type():
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
 
@@ -542,7 +566,7 @@ def test_add_alias_invalid_dst_type():
 
 
 def test_add_alias_dst_name_not_loaded():
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
 
@@ -552,10 +576,10 @@ def test_add_alias_dst_name_not_loaded():
 
 
 def test_add_alias_dst_invalid_fileset():
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
-    alias = DesignSchema("alias")
+    alias = Design("alias")
     with alias.active_fileset("rtl"):
         alias.set_topmodule("top")
 
@@ -565,7 +589,7 @@ def test_add_alias_dst_invalid_fileset():
 
 
 def test_add_alias_dst_name_type():
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
 
@@ -575,7 +599,7 @@ def test_add_alias_dst_name_type():
 
 
 def test_add_alias_dst_by_name_type():
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
 
@@ -586,13 +610,13 @@ def test_add_alias_dst_by_name_type():
 
 
 def test_add_alias_alias_imported():
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
     with design.active_fileset("rtl.other"):
         design.set_topmodule("top")
 
-    alias = DesignSchema("alias")
+    alias = Design("alias")
     with alias.active_fileset("rtl"):
         alias.set_topmodule("top")
     with alias.active_fileset("rtl1"):
@@ -610,11 +634,11 @@ def test_add_alias_alias_imported():
 
 
 def test_add_alias_alias_imported_clobber():
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
 
-    alias = DesignSchema("alias")
+    alias = Design("alias")
     with alias.active_fileset("rtl"):
         alias.set_topmodule("top")
     with alias.active_fileset("rtl1"):
@@ -631,11 +655,11 @@ def test_add_alias_alias_imported_clobber():
 
 
 def test_add_alias_remove_alias():
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
 
-    alias = DesignSchema("alias")
+    alias = Design("alias")
     with alias.active_fileset("rtl"):
         alias.set_topmodule("top")
     with alias.active_fileset("rtl1"):
@@ -649,11 +673,11 @@ def test_add_alias_remove_alias():
 
 
 def test_add_alias_repeat_fileset():
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
 
-    alias = DesignSchema("alias")
+    alias = Design("alias")
     with alias.active_fileset("rtl"):
         alias.set_topmodule("top")
     with alias.active_fileset("rtl1"):
@@ -667,16 +691,16 @@ def test_add_alias_repeat_fileset():
 
 
 def test_get_filesets_with_alias():
-    dep = DesignSchema("dep")
+    dep = Design("dep")
     with dep.active_fileset("rtl"):
         dep.set_topmodule("top")
 
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
         design.add_depfileset(dep, "rtl")
 
-    alias = DesignSchema("alias")
+    alias = Design("alias")
     with alias.active_fileset("rtl"):
         alias.set_topmodule("top")
     with alias.active_fileset("rtl1"):
@@ -692,16 +716,16 @@ def test_get_filesets_with_alias():
 
 
 def test_get_filesets_with_alias_remove():
-    dep = DesignSchema("dep")
+    dep = Design("dep")
     with dep.active_fileset("rtl"):
         dep.set_topmodule("top")
 
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
         design.add_depfileset(dep, "rtl")
 
-    alias = DesignSchema("alias")
+    alias = Design("alias")
     with alias.active_fileset("rtl"):
         alias.set_topmodule("top")
     with alias.active_fileset("rtl1"):
@@ -716,16 +740,16 @@ def test_get_filesets_with_alias_remove():
 
 
 def test_get_filesets_with_alias_same_fileset():
-    dep = DesignSchema("dep")
+    dep = Design("dep")
     with dep.active_fileset("rtl"):
         dep.set_topmodule("top")
 
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
         design.add_depfileset(dep, "rtl")
 
-    alias = DesignSchema("alias")
+    alias = Design("alias")
     with alias.active_fileset("rtl"):
         alias.set_topmodule("top")
     with alias.active_fileset("rtl1"):
@@ -741,7 +765,7 @@ def test_get_filesets_with_alias_same_fileset():
 
 
 def test_get_filesets_with_alias_missing():
-    design = DesignSchema("test")
+    design = Design("test")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
 
@@ -757,14 +781,14 @@ def test_has_library_not_found():
     proj = Project()
     assert proj.has_library("test") is False
 
-    proj.add_dep(DesignSchema("test"))
+    proj.add_dep(Design("test"))
     assert proj.has_library("notfound") is False
     assert proj.has_library("test") is True
 
 
 def test_has_library_not_found_with_object():
     proj = Project()
-    design = DesignSchema("test")
+    design = Design("test")
     assert proj.has_library(design) is False
 
     proj.add_dep(design)
@@ -773,7 +797,7 @@ def test_has_library_not_found_with_object():
 
 
 def test_summary_headers():
-    proj = Project(DesignSchema("testdesign"))
+    proj = Project(Design("testdesign"))
     assert proj._summary_headers() == [
         ("design", "testdesign"),
         ("jobdir", os.path.abspath("build/testdesign/job0"))
@@ -781,7 +805,7 @@ def test_summary_headers():
 
 
 def test_summary_headers_filesets():
-    proj = Project(DesignSchema("testdesign"))
+    proj = Project(Design("testdesign"))
     proj.set("option", "fileset", ["rtl0", "rtl1"])
     assert proj._summary_headers() == [
         ("design", "testdesign"),
@@ -791,8 +815,8 @@ def test_summary_headers_filesets():
 
 
 def test_summary_headers_alias():
-    proj = Project(DesignSchema("testdesign"))
-    proj.add_dep(DesignSchema("testalias"))
+    proj = Project(Design("testdesign"))
+    proj.add_dep(Design("testalias"))
     proj.set("option", "alias", [
         ("testdesign", "rtl", "testalias", "rtl0"),
         ("testdesign", "rtl", "notfound", "rtl1"),
@@ -809,8 +833,8 @@ def test_summary_headers_alias():
 
 
 def test_summary_headers_alias_with_delete_fileset():
-    proj = Project(DesignSchema("testdesign"))
-    proj.add_dep(DesignSchema("testalias"))
+    proj = Project(Design("testdesign"))
+    proj.add_dep(Design("testalias"))
     proj.set("option", "alias", [
         ("testdesign", "rtl", "testalias", None)
     ])
@@ -824,8 +848,8 @@ def test_summary_headers_alias_with_delete_fileset():
 
 
 def test_summary_headers_alias_with_delete_dst():
-    proj = Project(DesignSchema("testdesign"))
-    proj.add_dep(DesignSchema("testalias"))
+    proj = Project(Design("testdesign"))
+    proj.add_dep(Design("testalias"))
     proj.set("option", "alias", [
         ("testdesign", "rtl", None, "rtl")
     ])
@@ -844,7 +868,7 @@ def test_summary_no_jobs():
 
 
 def test_summary_select_job():
-    proj = Project(DesignSchema("testdesign"))
+    proj = Project(Design("testdesign"))
     proj.set("option", "jobname", "thisjob")
     proj._record_history()
     proj.set("option", "jobname", "thatjob")
@@ -857,8 +881,40 @@ def test_summary_select_job():
         history.assert_called_once_with("thatjob")
 
 
+def test_summary_stop_dashboard():
+    proj = Project(Design("testdesign"))
+    proj._record_history()
+
+    with patch("siliconcompiler.report.dashboard.cli.CliDashboard.is_running") as is_running, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.stop") as stop, \
+            patch("siliconcompiler.Project.history") as history:
+        history.return_value = proj
+        is_running.return_value = True
+        proj.summary()
+
+        is_running.assert_called_once()
+        stop.assert_called_once()
+        history.assert_called_once_with("job0")
+
+
+def test_summary_stop_dashboard_not_running():
+    proj = Project(Design("testdesign"))
+    proj._record_history()
+
+    with patch("siliconcompiler.report.dashboard.cli.CliDashboard.is_running") as is_running, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.stop") as stop, \
+            patch("siliconcompiler.Project.history") as history:
+        history.return_value = proj
+        is_running.return_value = False
+        proj.summary()
+
+        is_running.assert_called_once()
+        stop.assert_not_called()
+        history.assert_called_once_with("job0")
+
+
 def test_summary_select_job_user():
-    proj = Project(DesignSchema("testdesign"))
+    proj = Project(Design("testdesign"))
     proj.set("option", "jobname", "thisjob")
     proj._record_history()
     proj.set("option", "jobname", "thatjob")
@@ -872,7 +928,7 @@ def test_summary_select_job_user():
 
 
 def test_summary_select_unknownjob(caplog):
-    proj = Project(DesignSchema("testdesign"))
+    proj = Project(Design("testdesign"))
     setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.WARNING)
 
@@ -891,7 +947,7 @@ def test_summary_select_unknownjob(caplog):
 
 
 def test_collect_file_verbose(caplog):
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         with design._active(copy=True):
             design.add_file("top.v")
@@ -909,7 +965,7 @@ def test_collect_file_verbose(caplog):
 
 
 def test_collect_file_not_verbose(caplog):
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         with design._active(copy=True):
             design.add_file("top.v")
@@ -929,7 +985,7 @@ def test_collect_file_update():
     # Checks if collected files are properly updated after editing
 
     # Create instance of design
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         with design._active(copy=True):
             design.add_file("fake.v")
@@ -960,7 +1016,7 @@ def test_collect_file_update():
 
 def test_collect_directory():
     # Create instance of design
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         with design._active(copy=True):
             design.add_idir("testingdir")
@@ -985,7 +1041,7 @@ def test_collect_directory():
 
 def test_collect_subdirectory():
     # Create instance of design
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         with design._active(copy=True):
             design.add_idir("testingdir")
@@ -1011,7 +1067,7 @@ def test_collect_subdirectory():
 
 def test_collect_file_with_false():
     # Create instance of design
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         with design._active(copy=False):
             design.add_file("fake.v")
@@ -1036,7 +1092,7 @@ def test_collect_file_home(monkeypatch):
     _mock_home().mkdir(exist_ok=True)
 
     # Create instance of design
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         with design._active(copy=True):
             design.add_idir(str(Path.home()))
@@ -1057,7 +1113,7 @@ def test_collect_file_build():
     os.makedirs('build', exist_ok=True)
 
     # Create instance of design
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         with design._active(copy=True):
             design.add_idir("build")
@@ -1078,7 +1134,7 @@ def test_collect_file_hidden_dir():
     os.makedirs('test/.test', exist_ok=True)
 
     # Create instance of design
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         with design._active(copy=True):
             design.add_idir("test")
@@ -1099,7 +1155,7 @@ def test_collect_file_hidden_file():
     os.makedirs('test', exist_ok=True)
 
     # Create instance of design
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         with design._active(copy=True):
             design.add_idir("test")
@@ -1120,7 +1176,7 @@ def test_collect_file_whitelist_error():
     os.makedirs('test/testing', exist_ok=True)
 
     # Create instance of design
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         with design._active(copy=True):
             design.add_idir("test")
@@ -1140,7 +1196,7 @@ def test_collect_file_whitelist_pass():
     os.makedirs('test/testing', exist_ok=True)
 
     # Create instance of design
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         with design._active(copy=True):
             design.add_idir("test")
@@ -1330,8 +1386,8 @@ def test_getdict_type():
 
 
 def test_from_dict_restore_deps():
-    dep_design = DesignSchema("dep_design")
-    design = DesignSchema("testdesign")
+    dep_design = Design("dep_design")
+    design = Design("testdesign")
     design.add_dep(dep_design)
 
     proj = Project(design)
@@ -1349,7 +1405,7 @@ def test_from_dict_restore_deps():
 
 
 def test_find_result_not_setup():
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
 
@@ -1382,7 +1438,7 @@ def test_find_result():
     Path("reports/top.rpt").touch()
     Path("reports/report_this.rpt").touch()
 
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
 
@@ -1429,14 +1485,23 @@ def test_find_result():
         getworkdir.assert_called_once_with("thisstep", "0")
 
 
+def test_snapshot_info():
+    proj = Project(Design("testdesign"))
+
+    assert proj._snapshot_info() == [
+        ("Design", "testdesign")
+    ]
+
+
 def test_snapshot(caplog):
     image = Image.new('RGB', (1024, 1024))
     image.save("test.png")
 
-    proj = Project(DesignSchema("testdesign"))
+    proj = Project(Design("testdesign"))
     setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
     proj.set("option", "design", "testdesign")
+    proj._record_history()
 
     assert not os.path.isfile("testing.png")
 
@@ -1452,14 +1517,34 @@ def test_snapshot(caplog):
     assert "Generated summary image at " in caplog.text
 
 
+def test_snapshot_no_jobs():
+    with pytest.raises(ValueError, match="no history to snapshot"):
+        Project().snapshot()
+
+
+def test_snapshot_select_job():
+    proj = Project(Design("testdesign"))
+    proj.set("option", "jobname", "thisjob")
+    proj._record_history()
+    proj.set("option", "jobname", "thatjob")
+    proj._record_history()
+
+    with patch("siliconcompiler.Project.history") as history:
+        history.return_value = proj
+        proj.snapshot()
+
+        history.assert_called_once_with("thatjob")
+
+
 def test_snapshot_default_path(caplog):
     image = Image.new('RGB', (1024, 1024))
     image.save("test.png")
 
-    proj = Project(DesignSchema("testdesign"))
+    proj = Project(Design("testdesign"))
     setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
     proj.set("option", "design", "testdesign")
+    proj._record_history()
 
     os.makedirs(proj.getworkdir(), exist_ok=True)
     path = os.path.join(proj.getworkdir(), "testdesign.png")
@@ -1482,10 +1567,11 @@ def test_snapshot_display_false(caplog):
     image = Image.new('RGB', (1024, 1024))
     image.save("test.png")
 
-    proj = Project(DesignSchema("testdesign"))
+    proj = Project(Design("testdesign"))
     setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
     proj.set("option", "design", "testdesign")
+    proj._record_history()
 
     assert not os.path.isfile("testing.png")
 
@@ -1505,11 +1591,12 @@ def test_snapshot_nodisplay(caplog):
     image = Image.new('RGB', (1024, 1024))
     image.save("test.png")
 
-    proj = Project(DesignSchema("testdesign"))
+    proj = Project(Design("testdesign"))
     setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
     proj.set("option", "design", "testdesign")
     proj.set("option", "nodisplay", True)
+    proj._record_history()
 
     assert not os.path.isfile("testing.png")
 
@@ -1536,6 +1623,17 @@ def test_check_manifest_empty(caplog):
     assert "[option,flow] has not been set" in caplog.text
 
 
+def test_check_manifest_empty_with_design(caplog):
+    proj = Project(Design("testdesign"))
+    setattr(proj, "_Project__logger", logging.getLogger())
+    proj.logger.setLevel(logging.INFO)
+
+    assert proj.check_manifest() is False
+    assert "[option,design] has not been set" not in caplog.text
+    assert "[option,fileset] has not been set" in caplog.text
+    assert "[option,flow] has not been set" in caplog.text
+
+
 def test_check_manifest_design_set_not_loaded(caplog):
     proj = Project()
     proj.set("option", "design", "testdesign")
@@ -1549,7 +1647,7 @@ def test_check_manifest_design_set_not_loaded(caplog):
 
 
 def test_check_manifest_with_missing_fileset(caplog):
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     proj = Project(design)
     proj.set("option", "fileset", "rtl")
     setattr(proj, "_Project__logger", logging.getLogger())
@@ -1561,7 +1659,7 @@ def test_check_manifest_with_missing_fileset(caplog):
 
 
 def test_check_manifest_with_missing_topmodule(caplog):
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.add_file("top.v")
     proj = Project(design)
@@ -1575,7 +1673,7 @@ def test_check_manifest_with_missing_topmodule(caplog):
 
 
 def test_check_manifest_with_missing_flow(caplog):
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
         design.add_file("top.v")
@@ -1590,11 +1688,11 @@ def test_check_manifest_with_missing_flow(caplog):
 
 
 def test_check_manifest_pass(caplog):
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
         design.add_file("top.v")
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     proj = Project(design)
     proj.set("option", "fileset", "rtl")
     proj.set_flow(flow)
@@ -1606,11 +1704,11 @@ def test_check_manifest_pass(caplog):
 
 
 def test_check_manifest_with_alias_missing_src(caplog):
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
         design.add_file("top.v")
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     proj = Project(design)
     proj.set("option", "fileset", "rtl")
     proj.set_flow(flow)
@@ -1625,11 +1723,11 @@ def test_check_manifest_with_alias_missing_src(caplog):
 
 
 def test_check_manifest_with_alias_empty_src(caplog):
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
         design.add_file("top.v")
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     proj = Project(design)
     proj.set("option", "fileset", "rtl")
     proj.set_flow(flow)
@@ -1644,11 +1742,11 @@ def test_check_manifest_with_alias_empty_src(caplog):
 
 
 def test_check_manifest_with_alias_missing_src_fileset(caplog):
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
         design.add_file("top.v")
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     proj = Project(design)
     proj.set("option", "fileset", "rtl")
     proj.set_flow(flow)
@@ -1663,11 +1761,11 @@ def test_check_manifest_with_alias_missing_src_fileset(caplog):
 
 
 def test_check_manifest_with_alias_missing_dst(caplog):
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
         design.add_file("top.v")
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     proj = Project(design)
     proj.set("option", "fileset", "rtl")
     proj.set_flow(flow)
@@ -1682,11 +1780,11 @@ def test_check_manifest_with_alias_missing_dst(caplog):
 
 
 def test_check_manifest_with_alias_empty_dst_fileset(caplog):
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
         design.add_file("top.v")
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     proj = Project(design)
     proj.set("option", "fileset", "rtl")
     proj.set_flow(flow)
@@ -1701,11 +1799,11 @@ def test_check_manifest_with_alias_empty_dst_fileset(caplog):
 
 
 def test_check_manifest_with_alias_missing_dst_lib(caplog):
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
         design.add_file("top.v")
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     proj = Project(design)
     proj.set("option", "fileset", "rtl")
     proj.set_flow(flow)
@@ -1720,11 +1818,11 @@ def test_check_manifest_with_alias_missing_dst_lib(caplog):
 
 
 def test_check_manifest_with_alias_missing_dst_fileset(caplog):
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
         design.add_file("top.v")
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     proj = Project(design)
     proj.set("option", "fileset", "rtl")
     proj.set_flow(flow)
@@ -1739,7 +1837,7 @@ def test_check_manifest_with_alias_missing_dst_fileset(caplog):
 
 
 def test_init_run(caplog):
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
         design.add_file("top.v")
@@ -1756,8 +1854,56 @@ def test_init_run(caplog):
     assert "Setting design fileset to: rtl" in caplog.text
 
 
+def test_init_run_disable_dashboard_breakpoint(caplog):
+    design = Design("testdesign")
+    with design.active_fileset("rtl"):
+        design.set_topmodule("top")
+        design.add_file("top.v")
+
+    proj = Project(design)
+
+    flow = Flowgraph("testflow")
+    flow.node("faux", FauxTask0())
+    proj.set_flow(flow)
+
+    setattr(proj, "_Project__logger", logging.getLogger())
+    proj.logger.setLevel(logging.INFO)
+    setattr(proj, "__Project_dashboard", True)
+
+    proj.set("option", "breakpoint", True, step="faux")
+
+    with patch("siliconcompiler.report.dashboard.cli.CliDashboard.is_running") as is_running, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.stop") as stop:
+        is_running.return_value = True
+        proj._init_run()
+        is_running.assert_called_once()
+        stop.assert_called_once()
+
+    assert "Disabling dashboard due to breakpoints at: faux/0" in caplog.text
+
+
+def test_init_run_disable_dashboard_no_breakpoint():
+    design = Design("testdesign")
+    with design.active_fileset("rtl"):
+        design.set_topmodule("top")
+        design.add_file("top.v")
+
+    proj = Project(design)
+
+    flow = Flowgraph("testflow")
+    flow.node("faux", FauxTask0())
+    proj.set_flow(flow)
+
+    setattr(proj, "__Project_dashboard", True)
+
+    with patch("siliconcompiler.report.dashboard.cli.CliDashboard.is_running") as is_running:
+        is_running.return_value = True
+        proj._init_run()
+        is_running.assert_not_called()
+
+
 def test_init_run_do_nothing(caplog):
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
         design.add_file("top.v")
@@ -1788,3 +1934,253 @@ def test_init_run_no_design(caplog):
     assert proj.get("option", "fileset") == []
 
     assert caplog.text == ""
+
+
+def test_archive_no_jobs():
+    with pytest.raises(ValueError, match="no history to archive"):
+        Project().archive()
+
+
+def test_archive_select_job():
+    proj = Project(Design("testdesign"))
+    proj.set("option", "jobname", "thisjob")
+    proj._record_history()
+    proj.set("option", "jobname", "thatjob")
+    proj._record_history()
+
+    with patch("siliconcompiler.Project.history") as history:
+        history.return_value = proj
+        proj.archive()
+
+        history.assert_called_once_with("thatjob")
+
+
+def test_archive_default_archive(caplog):
+    proj = Project(Design("testdesign"))
+    setattr(proj, "_Project__logger", logging.getLogger())
+    proj.logger.setLevel(logging.INFO)
+    proj._record_history()
+
+    proj.archive()
+
+    assert "Creating archive testdesign_job0.tgz..." in caplog.text
+    assert os.path.isfile("testdesign_job0.tgz")
+
+
+def test_archive_archive_name(caplog):
+    proj = Project(Design("testdesign"))
+    setattr(proj, "_Project__logger", logging.getLogger())
+    proj.logger.setLevel(logging.INFO)
+    proj._record_history()
+
+    proj.archive(archive_name="test.tar.gz")
+
+    assert "Creating archive test.tar.gz..." in caplog.text
+    assert os.path.isfile("test.tar.gz")
+
+
+def test_archive(caplog):
+    design = Design("testdesign")
+    design.set_topmodule("top", fileset="test")
+    proj = Project(design)
+    proj.add_fileset("test")
+    setattr(proj, "_Project__logger", logging.getLogger())
+    proj.logger.setLevel(logging.INFO)
+
+    flow = Flowgraph("testflow")
+    flow.node("stepone", FauxTask0())
+    flow.node("steptwo", FauxTask0())
+    flow.edge("stepone", "steptwo")
+    proj.set_flow(flow)
+
+    proj._record_history()
+
+    with patch("siliconcompiler.scheduler.SchedulerNode.archive") as archive:
+        proj.archive()
+        assert archive.call_count == 2
+
+    assert "Creating archive testdesign_job0.tgz..." in caplog.text
+    assert os.path.isfile("testdesign_job0.tgz")
+
+
+def test_run():
+    design = Design("testdesign")
+    design.set_topmodule("top", fileset="test")
+    proj = Project(design)
+    proj.add_fileset("test")
+
+    flow = Flowgraph("testflow")
+    flow.node("stepone", FauxTask0())
+    flow.node("steptwo", FauxTask0())
+    flow.edge("stepone", "steptwo")
+    proj.set_flow(flow)
+
+    def mock_run():
+        proj._record_history()
+
+    with patch("siliconcompiler.scheduler.Scheduler.run") as run, \
+            patch("siliconcompiler.Project._Project__reset_job_params") as reset:
+        run.side_effect = mock_run
+        hist = proj.run()
+        assert isinstance(hist, Project)
+        assert hist is proj.get("history", "job0", field="schema")
+        run.assert_called_once()
+        reset.assert_called_once()
+
+
+def test_run_remote():
+    design = Design("testdesign")
+    design.set_topmodule("top", fileset="test")
+    proj = Project(design)
+    proj.add_fileset("test")
+
+    flow = Flowgraph("testflow")
+    flow.node("stepone", FauxTask0())
+    flow.node("steptwo", FauxTask0())
+    flow.edge("stepone", "steptwo")
+    proj.set_flow(flow)
+
+    proj.set("option", "remote", True)
+
+    def mock_run():
+        proj._record_history()
+
+    with patch("siliconcompiler.remote.ClientScheduler.run") as run, \
+            patch("siliconcompiler.Project._Project__reset_job_params") as reset:
+        run.side_effect = mock_run
+        hist = proj.run()
+        assert isinstance(hist, Project)
+        assert hist is proj.get("history", "job0", field="schema")
+        run.assert_called_once()
+        reset.assert_called_once()
+
+
+def test_run_with_dashboard_running():
+    design = Design("testdesign")
+    design.set_topmodule("top", fileset="test")
+    proj = Project(design)
+    proj.add_fileset("test")
+
+    flow = Flowgraph("testflow")
+    flow.node("stepone", FauxTask0())
+    flow.node("steptwo", FauxTask0())
+    flow.edge("stepone", "steptwo")
+    proj.set_flow(flow)
+
+    assert proj._Project__dashboard is not None
+
+    with patch("siliconcompiler.scheduler.Scheduler.run") as run, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.is_running") as is_running, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.open_dashboard") as \
+            open_dashboard, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.set_logger") as set_logger, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.update_manifest") as \
+            update_manifest, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.end_of_run") as end_of_run:
+        is_running.return_value = True
+        proj._record_history()
+
+        proj.run()
+
+        run.assert_called_once()
+        is_running.assert_called()
+        assert is_running.call_count == 2
+        open_dashboard.assert_not_called()
+        set_logger.assert_called()
+        assert set_logger.call_count == 2
+        update_manifest.assert_called_once()
+        end_of_run.assert_called_once()
+
+
+def test_run_with_dashboard_notrunning():
+    design = Design("testdesign")
+    design.set_topmodule("top", fileset="test")
+    proj = Project(design)
+    proj.add_fileset("test")
+
+    flow = Flowgraph("testflow")
+    flow.node("stepone", FauxTask0())
+    flow.node("steptwo", FauxTask0())
+    flow.edge("stepone", "steptwo")
+    proj.set_flow(flow)
+
+    assert proj._Project__dashboard is not None
+
+    with patch("siliconcompiler.scheduler.Scheduler.run") as run, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.is_running") as is_running, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.open_dashboard") as \
+            open_dashboard, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.set_logger") as set_logger, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.update_manifest") as \
+            update_manifest, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.end_of_run") as end_of_run:
+        is_running.return_value = False
+        proj._record_history()
+
+        proj.run()
+
+        run.assert_called_once()
+        is_running.assert_called()
+        assert is_running.call_count == 2
+        open_dashboard.assert_called_once()
+        set_logger.assert_called_once()
+        update_manifest.assert_called_once()
+        end_of_run.assert_called_once()
+
+
+def test_run_with_nodashboard():
+    design = Design("testdesign")
+    design.set_topmodule("top", fileset="test")
+    proj = Project(design)
+    proj.add_fileset("test")
+
+    flow = Flowgraph("testflow")
+    flow.node("stepone", FauxTask0())
+    flow.node("steptwo", FauxTask0())
+    flow.edge("stepone", "steptwo")
+    proj.set_flow(flow)
+
+    proj.set("option", "nodashboard", True)
+    assert proj._Project__dashboard is None
+
+    with patch("siliconcompiler.scheduler.Scheduler.run") as run, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.is_running") as is_running, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.open_dashboard") as \
+            open_dashboard, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.set_logger") as set_logger, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.update_manifest") as \
+            update_manifest, \
+            patch("siliconcompiler.report.dashboard.cli.CliDashboard.end_of_run") as end_of_run:
+        is_running.return_value = False
+        proj._record_history()
+
+        proj.run()
+
+        run.assert_called_once()
+        is_running.assert_not_called()
+        open_dashboard.assert_not_called()
+        set_logger.assert_not_called()
+        update_manifest.assert_not_called()
+        end_of_run.assert_not_called()
+
+
+def test_reset_job_params():
+    proj = Project()
+
+    assert proj.get("arg", "step", field="scope") == Scope.SCRATCH
+    assert proj.get("option", "breakpoint", field="scope") == Scope.JOB
+    assert proj.get("option", "design", field="scope") == Scope.GLOBAL
+
+    assert proj.set("arg", "step", "teststep")
+    assert proj.set("option", "breakpoint", True)
+    assert proj.set("option", "design", "testdesign")
+
+    assert proj.get("arg", "step") == "teststep"
+    assert proj.get("option", "breakpoint") is True
+    assert proj.get("option", "design") == "testdesign"
+
+    proj._Project__reset_job_params()
+
+    assert proj.get("arg", "step") is None
+    assert proj.get("option", "breakpoint") is False
+    assert proj.get("option", "design") == "testdesign"

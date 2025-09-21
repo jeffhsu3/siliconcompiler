@@ -5,7 +5,7 @@ import os.path
 
 from siliconcompiler import sc_open
 
-from siliconcompiler import TaskSchema
+from siliconcompiler.tool import TaskSchema
 
 
 class ConvertTask(TaskSchema):
@@ -39,16 +39,16 @@ class ConvertTask(TaskSchema):
 
         self.add_required_key("option", "design")
         self.add_required_key("option", "fileset")
-        if self.schema().get("option", "alias"):
+        if self.project.get("option", "alias"):
             self.add_required_key("option", "alias")
 
         # Mark required
-        for lib, fileset in self.schema().get_filesets():
-            if lib.get("fileset", fileset, "idir"):
+        for lib, fileset in self.project.get_filesets():
+            if lib.has_idir(fileset):
                 self.add_required_key(lib, "fileset", fileset, "idir")
             if lib.get("fileset", fileset, "define"):
                 self.add_required_key(lib, "fileset", fileset, "define")
-            if lib.get_file(fileset=fileset, filetype="bsv"):
+            if lib.has_file(fileset=fileset, filetype="bsv"):
                 self.add_required_key(lib, "fileset", fileset, "file", "bsv")
 
     def pre_process(self):
@@ -74,11 +74,11 @@ class ConvertTask(TaskSchema):
 
         options.extend(['-g', self.design_topmodule])
 
-        filesets = self.schema().get_filesets()
+        filesets = self.project.get_filesets()
         idirs = []
         defines = []
         for lib, fileset in filesets:
-            idirs.extend(lib.find_files("fileset", fileset, "idir"))
+            idirs.extend(lib.get_idir(fileset))
             defines.extend(lib.get("fileset", fileset, "define"))
 
         bsc_path = ':'.join(idirs + ['%/Libraries'])
@@ -111,7 +111,7 @@ class ConvertTask(TaskSchema):
         if os.path.exists(use_file):
             bsc_tool_path = os.path.dirname(
                 os.path.dirname(
-                    self.schema("record").get('toolpath', step=self.step, index=self.index)))
+                    self.schema_record.get('toolpath', step=self.step, index=self.index)))
             bsc_lib = os.path.join(bsc_tool_path, "lib", "Verilog")
 
             with sc_open(use_file) as f:

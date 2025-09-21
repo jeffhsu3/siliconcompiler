@@ -6,7 +6,7 @@ import os.path
 from siliconcompiler import sc_open
 from siliconcompiler import utils
 
-from siliconcompiler import TaskSchema
+from siliconcompiler.tool import TaskSchema
 
 
 class ElaborateTask(TaskSchema):
@@ -45,8 +45,8 @@ class ElaborateTask(TaskSchema):
     def setup(self):
         super().setup()
 
-        is_docker = self.schema().get('option', 'scheduler', 'name',
-                                      step=self.step, index=self.index) == 'docker'
+        is_docker = self.project.get('option', 'scheduler', 'name',
+                                     step=self.step, index=self.index) == 'docker'
         if not is_docker:
             exe = 'surelog'
             if sys.platform.startswith("win32"):
@@ -63,31 +63,31 @@ class ElaborateTask(TaskSchema):
             self.add_regex("warnings", f"-v {warning}")
         self.add_regex("errors", r'^\[(ERR|FTL|SNT):')
 
-        self.add_required_tool_key("var", "enable_lowmem")
-        self.add_required_tool_key("var", "disable_write_cache")
-        self.add_required_tool_key("var", "disable_info")
-        self.add_required_tool_key("var", "disable_note")
+        self.add_required_key("var", "enable_lowmem")
+        self.add_required_key("var", "disable_write_cache")
+        self.add_required_key("var", "disable_info")
+        self.add_required_key("var", "disable_note")
 
         self.add_required_key("option", "design")
         self.add_required_key("option", "fileset")
-        if self.schema().get("option", "alias"):
+        if self.project.get("option", "alias"):
             self.add_required_key("option", "alias")
 
         # Mark required
-        for lib, fileset in self.schema().get_filesets():
-            if lib.get("fileset", fileset, "idir"):
+        for lib, fileset in self.project.get_filesets():
+            if lib.has_idir(fileset):
                 self.add_required_key(lib, "fileset", fileset, "idir")
             if lib.get("fileset", fileset, "define"):
                 self.add_required_key(lib, "fileset", fileset, "define")
-            if lib.get_file(fileset=fileset, filetype="commandfile"):
+            if lib.has_file(fileset=fileset, filetype="commandfile"):
                 self.add_required_key(lib, "fileset", fileset, "file", "commandfile")
-            if lib.get_file(fileset=fileset, filetype="systemverilog"):
+            if lib.has_file(fileset=fileset, filetype="systemverilog"):
                 self.add_required_key(lib, "fileset", fileset, "file", "systemverilog")
-            if lib.get_file(fileset=fileset, filetype="verilog"):
+            if lib.has_file(fileset=fileset, filetype="verilog"):
                 self.add_required_key(lib, "fileset", fileset, "file", "verilog")
 
-        fileset = self.schema().get("option", "fileset")[0]
-        design = self.schema().design
+        fileset = self.project.get("option", "fileset")[0]
+        design = self.project.design
         for param in design.getkeys("fileset", fileset, "param"):
             self.add_required_key(design, "fileset", fileset, "param", param)
 
@@ -119,16 +119,16 @@ class ElaborateTask(TaskSchema):
         # very big and takes a while to write out.
         options.append('-nouhdm')
 
-        filesets = self.schema().get_filesets()
+        filesets = self.project.get_filesets()
         idirs = []
         defines = []
         for lib, fileset in filesets:
-            idirs.extend(lib.find_files("fileset", fileset, "idir"))
+            idirs.extend(lib.get_idir(fileset))
             defines.extend(lib.get("fileset", fileset, "define"))
 
         params = []
-        fileset = self.schema().get("option", "fileset")[0]
-        design = self.schema().design
+        fileset = self.project.get("option", "fileset")[0]
+        design = self.project.design
         for param in design.getkeys("fileset", fileset, "param"):
             params.append((param, design.get("fileset", fileset, "param", param)))
 

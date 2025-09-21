@@ -1,52 +1,41 @@
-from siliconcompiler._common import NodeStatus, SiliconCompilerError
-
+# General utilities
+from siliconcompiler._common import NodeStatus
 from siliconcompiler.utils import sc_open
-
-from siliconcompiler.packageschema import PackageSchema
-
-from siliconcompiler.library import LibrarySchema, ToolLibrarySchema, StdCellLibrarySchema
-
-from siliconcompiler.design import DesignSchema
-from siliconcompiler.record import RecordSchema
-from siliconcompiler.metric import MetricSchema
-from siliconcompiler.pdk import PDKSchema
-from siliconcompiler.flowgraph import FlowgraphSchema
-from siliconcompiler.tool import ToolSchema, TaskSchema
-from siliconcompiler.tool import ShowTaskSchema, ScreenshotTaskSchema
-from siliconcompiler.checklist import ChecklistSchema
-from siliconcompiler.option import OptionSchema
-
-from siliconcompiler.project import Project
-from siliconcompiler.asic import ASICProject, ASICTaskSchema
-from siliconcompiler.fpga import FPGASchema, FPGAProject
-
 from siliconcompiler._metadata import version as __version__
+
+# User classes
+from siliconcompiler.design import Design
+from siliconcompiler.pdk import PDK
+from siliconcompiler.flowgraph import Flowgraph
+from siliconcompiler.checklist import Checklist
+from siliconcompiler.library import StdCellLibrary
+from siliconcompiler.schematic import Schematic
+
+# Projects
+from siliconcompiler.project import Project
+from siliconcompiler.asic import ASICProject
+from siliconcompiler.fpga import FPGAProject
+from siliconcompiler.project import LintProject
+from siliconcompiler.project import SimProject
+
+from siliconcompiler.fpga import FPGA
 
 __all__ = [
     "__version__",
-    "SiliconCompilerError",
     "NodeStatus",
     "sc_open",
 
-    "DesignSchema",
-    "LibrarySchema",
-    "RecordSchema",
-    "MetricSchema",
-    "PDKSchema",
-    "FlowgraphSchema",
-    "ToolSchema",
-    "TaskSchema",
-    "ChecklistSchema",
-    "FPGASchema",
-    "PackageSchema",
-    "OptionSchema",
+    "Design",
+    "PDK",
+    "Flowgraph",
+    "Checklist",
+    "FPGA",
+    "Schematic",
+    "StdCellLibrary",
 
     "Project",
     "ASICProject",
     "FPGAProject",
-    "StdCellLibrarySchema",
-    "ToolLibrarySchema",
-    "ASICTaskSchema",
-    "ShowTaskSchema",
-    "ScreenshotTaskSchema"
+    "LintProject",
+    "SimProject"
 ]

@@ -33,8 +33,10 @@ def test_server_authenticated(gcd_nop_project, scserver, scserver_users, scserve
     assert os.path.isfile('build/gcd/job0/stepone/0/outputs/gcd.pkg.json')
     assert os.path.isfile('build/gcd/job0/steptwo/0/outputs/gcd.pkg.json')
 
-    assert gcd_nop_project.get("record", "status", step="stepone", index="0") == NodeStatus.SUCCESS
-    assert gcd_nop_project.get("record", "status", step="steptwo", index="0") == NodeStatus.SUCCESS
+    assert gcd_nop_project.history("job0").get("record", "status", step="stepone", index="0") == \
+        NodeStatus.SUCCESS
+    assert gcd_nop_project.history("job0").get("record", "status", step="steptwo", index="0") == \
+        NodeStatus.SUCCESS
 
 
 ###########################
@@ -65,7 +67,7 @@ def test_server_not_authenticated(gcd_nop_project, scserver, scserver_users,
 
     # Run remote build. It should fail, so catch the expected exception.
     with pytest.raises(RuntimeError, match="Server responded with 403: Authentication error."):
-        gcd_nop_project.run(raise_exception=True)
+        gcd_nop_project.run()
 
 
 def test_server(gcd_remote_test):
@@ -84,8 +86,10 @@ def test_server(gcd_remote_test):
     assert os.path.isfile('build/gcd/job0/stepone/0/outputs/gcd.pkg.json')
     assert os.path.isfile('build/gcd/job0/steptwo/0/outputs/gcd.pkg.json')
 
-    assert gcd_project.get("record", "status", step="stepone", index="0") == NodeStatus.SUCCESS
-    assert gcd_project.get("record", "status", step="steptwo", index="0") == NodeStatus.SUCCESS
+    assert gcd_project.history("job0").get("record", "status", step="stepone", index="0") == \
+        NodeStatus.SUCCESS
+    assert gcd_project.history("job0").get("record", "status", step="steptwo", index="0") == \
+        NodeStatus.SUCCESS
 
 
 ###########################
@@ -109,12 +113,15 @@ def test_server_partial(gcd_remote_test):
     assert os.path.isfile('build/gcd/job0/stepone/0/outputs/gcd.pkg.json')
     assert not os.path.isfile('build/gcd/job0/steptwo/0/outputs/gcd.pkg.json')
 
-    assert gcd_project.get("record", "status", step="stepone", index="0") == NodeStatus.SUCCESS
-    assert gcd_project.get("record", "status", step="steptwo", index="0") == NodeStatus.PENDING
+    assert gcd_project.history("job0").get("record", "status", step="stepone", index="0") == \
+        NodeStatus.SUCCESS
+    assert gcd_project.history("job0").get("record", "status", step="steptwo", index="0") == \
+        NodeStatus.PENDING
 
 
 @pytest.mark.eda
 @pytest.mark.quick
+@pytest.mark.ready
 def test_server_slurm(gcd_remote_test):
     '''Basic sc-server test: Run a local instance of a server, and build the GCD
        example using loopback network calls to that server.
@@ -124,11 +131,13 @@ def test_server_slurm(gcd_remote_test):
     gcd_project = gcd_remote_test(use_slurm=True)
 
     # Run the remote job.
-    gcd_project.run(raise_exception=True)
+    gcd_project.run()
 
     assert os.path.isfile('build/gcd/job0/gcd.pkg.json')
     assert os.path.isfile('build/gcd/job0/stepone/0/outputs/gcd.pkg.json')
     assert os.path.isfile('build/gcd/job0/steptwo/0/outputs/gcd.pkg.json')
 
-    assert gcd_project.get("record", "status", step="stepone", index="0") == NodeStatus.SUCCESS
-    assert gcd_project.get("record", "status", step="steptwo", index="0") == NodeStatus.SUCCESS
+    assert gcd_project.history("job0").get("record", "status", step="stepone", index="0") == \
+        NodeStatus.SUCCESS
+    assert gcd_project.history("job0").get("record", "status", step="steptwo", index="0") == \
+        NodeStatus.SUCCESS

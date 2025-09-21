@@ -1,4 +1,4 @@
-from siliconcompiler import TaskSchema
+from siliconcompiler.tool import TaskSchema
 
 
 class ConvertTask(TaskSchema):
@@ -44,18 +44,18 @@ class ConvertTask(TaskSchema):
 
         self.add_required_key("option", "design")
         self.add_required_key("option", "fileset")
-        if self.schema().get("option", "alias"):
+        if self.project.get("option", "alias"):
             self.add_required_key("option", "alias")
 
         # Mark required
-        for lib, fileset in self.schema().get_filesets():
+        for lib, fileset in self.project.get_filesets():
             if lib.get("fileset", fileset, "define"):
                 self.add_required_key(lib, "fileset", fileset, "define")
-            if lib.get_file(fileset=fileset, filetype="vhdl"):
+            if lib.has_file(fileset=fileset, filetype="vhdl"):
                 self.add_required_key(lib, "fileset", fileset, "file", "vhdl")
 
-        self.add_required_tool_key("var", "use_fsynopsys")
-        self.add_required_tool_key("var", "use_latches")
+        self.add_required_key("var", "use_fsynopsys")
+        self.add_required_key("var", "use_latches")
 
     def runtime_options(self):
         options = super().runtime_options()
@@ -71,7 +71,7 @@ class ConvertTask(TaskSchema):
         if self.get("var", "use_latches"):
             options.append('--latches')
 
-        filesets = self.schema().get_filesets()
+        filesets = self.project.get_filesets()
         defines = []
         for lib, fileset in filesets:
             defines.extend(lib.get("fileset", fileset, "define"))

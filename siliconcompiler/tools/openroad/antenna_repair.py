@@ -1,10 +1,11 @@
 from siliconcompiler.tool import TaskSkip
 from siliconcompiler.tools.openroad._apr import APRTask
 from siliconcompiler.tools.openroad._apr import OpenROADSTAParameter, OpenROADGRTParameter, \
-    OpenROADANTParameter
+    OpenROADANTParameter, OpenROADFillCellsParameter
 
 
-class AntennaRepairTask(APRTask, OpenROADSTAParameter, OpenROADGRTParameter, OpenROADANTParameter):
+class AntennaRepairTask(APRTask, OpenROADSTAParameter, OpenROADGRTParameter, OpenROADANTParameter,
+                        OpenROADFillCellsParameter):
     '''
     Perform antenna repair
     '''
@@ -44,6 +45,9 @@ class AntennaRepairTask(APRTask, OpenROADSTAParameter, OpenROADGRTParameter, Ope
             'clock_trees',
             'module_view'
         ])
+
+        self.add_required_key("var", "ant_check")
+        self.add_required_key("var", "ant_repair")
 
     def pre_process(self):
         if not self.get("var", "ant_check"):

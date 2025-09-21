@@ -1,10 +1,10 @@
-from siliconcompiler import FlowgraphSchema
+from siliconcompiler import Flowgraph
 
 from siliconcompiler.tools.openroad import rdlroute
 from siliconcompiler.tools.klayout import export
 
 
-class InterposerFlow(FlowgraphSchema):
+class InterposerFlow(Flowgraph):
     '''A flow to perform Redistribution Layer (RDL) routing and generate a GDS.
 
     This flow is designed for creating interposers or other simple routing
@@ -12,6 +12,7 @@ class InterposerFlow(FlowgraphSchema):
     final layout to a GDSII file.
 
     The flow consists of the following steps:
+
     * **rdlroute**: Performs RDL routing on the input design.
     * **write_gds**: Exports the routed design to a GDSII file.
     '''

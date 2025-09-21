@@ -4,14 +4,16 @@ import inspect
 
 import os.path
 
-from siliconcompiler.schema import BaseSchema, NamedSchema
+from typing import Tuple
+
+from siliconcompiler.schema import BaseSchema, NamedSchema, DocsSchema
 from siliconcompiler.schema import EditableSchema, Parameter, Scope
 from siliconcompiler.schema.utils import trim
 
 from siliconcompiler import NodeStatus
 
 
-class FlowgraphSchema(NamedSchema):
+class Flowgraph(NamedSchema, DocsSchema):
     '''
     Schema for defining and interacting with a flowgraph.
 
@@ -24,7 +26,7 @@ class FlowgraphSchema(NamedSchema):
 
     def __init__(self, name=None):
         '''
-        Initializes a new FlowgraphSchema object.
+        Initializes a new Flowgraph object.
 
         Args:
             name (str, optional): The name of the flowgraph. Defaults to None.
@@ -236,16 +238,16 @@ class FlowgraphSchema(NamedSchema):
         Instantiates a sub-flowgraph within the current flowgraph.
 
         Args:
-            subflow (FlowgraphSchema): The flowgraph to instantiate.
+            subflow (Flowgraph): The flowgraph to instantiate.
             name (str, optional): A prefix to add to the names of the
                 instantiated steps to ensure they are unique. Defaults to None.
 
         Raises:
-            ValueError: If `subflow` is not a `FlowgraphSchema` object, or if
+            ValueError: If `subflow` is not a `Flowgraph` object, or if
                 a step from the sub-flowgraph already exists in the current graph.
         '''
-        if not isinstance(subflow, FlowgraphSchema):
-            raise ValueError(f"subflow must a FlowgraphSchema, not: {type(subflow)}")
+        if not isinstance(subflow, Flowgraph):
+            raise ValueError(f"subflow must a Flowgraph, not: {type(subflow)}")
 
         for step in subflow.getkeys():
             # uniquify each step
@@ -567,8 +569,8 @@ class FlowgraphSchema(NamedSchema):
 
         try:
             module_name, cls = name.split("/")
-        except ValueError:
-            raise ValueError("task is not correctly formatted as <module>/<class>")
+        except (ValueError, AttributeError):
+            raise ValueError(f"task is not correctly formatted as <module>/<class>: {name}")
         module = importlib.import_module(module_name)
 
         self.__cache_tasks[name] = getattr(module, cls)
@@ -611,7 +613,7 @@ class FlowgraphSchema(NamedSchema):
         Returns the metadata type for `getdict` serialization.
         """
 
-        return FlowgraphSchema.__name__
+        return Flowgraph.__name__
 
     def __get_graph_information(self):
         # Setup nodes
@@ -836,6 +838,45 @@ class FlowgraphSchema(NamedSchema):
 
         dot.render(filename=fileroot, cleanup=True)
 
+    def _generate_doc(self, doc,
+                      ref_root: str = "",
+                      key_offset: Tuple[str] = None,
+                      detailed: bool = True):
+        from .schema.docs.utils import image, build_section
+
+        if not key_offset:
+            key_offset = []
+
+        docs = []
+        image_sec = build_section("Graph", f"{ref_root}-flow-{self.name}-graph")
+        image_path_root = os.path.join(doc.env.app.outdir, f"_images/gen/flows/{self.name}.svg")
+        image_path = image_path_root
+        idx = 0
+        while os.path.exists(image_path):
+            base, ext = os.path.splitext(image_path_root)
+            image_path = f"{base}-{idx}{ext}"
+            idx += 1
+        os.makedirs(os.path.dirname(image_path), exist_ok=True)
+        self.write_flowgraph(image_path)
+        image_sec += image(image_path, center=True)
+        docs.append(image_sec)
+
+        config = build_section("Nodes", f"{ref_root}-flow-{self.name}-nodes")
+        for nodes in self.get_execution_order():
+            for step, index in nodes:
+                sec = build_section(f"{step}/{index}",
+                                    f"{ref_root}-flow-{self.name}-nodes-{step}-{index}")
+                sec += BaseSchema._generate_doc(
+                    self.get(step, index, field="schema"),
+                    doc,
+                    ref_root=f"{ref_root}-flow-{self.name}-nodes-{step}-{index}",
+                    key_offset=(*key_offset, "flowgraph", self.name),
+                    detailed=False)
+                config += sec
+        docs.append(config)
+
+        return docs
+
 
 class RuntimeFlowgraph:
     '''
@@ -852,7 +893,7 @@ class RuntimeFlowgraph:
         Initializes a new RuntimeFlowgraph.
 
         Args:
-            base (FlowgraphSchema): The base flowgraph to create a view of.
+            base (Flowgraph): The base flowgraph to create a view of.
             args (tuple[str, str], optional): A specific `(step, index)` to run.
                 If provided, this overrides `from_steps` and `to_steps`.
                 Defaults to None.
@@ -863,8 +904,8 @@ class RuntimeFlowgraph:
             prune_nodes (list[tuple(str,str)], optional): A list of `(step, index)`
                 nodes to exclude from the graph. Defaults to None.
         '''
-        if not all([hasattr(base, attr) for attr in dir(FlowgraphSchema)]):
-            raise ValueError(f"base must a FlowgraphSchema, not: {type(base)}")
+        if not all([hasattr(base, attr) for attr in dir(Flowgraph)]):
+            raise ValueError(f"base must a Flowgraph, not: {type(base)}")
 
         self.__base = base
 
@@ -1110,7 +1151,7 @@ class RuntimeFlowgraph:
         the graph by removing all entry/exit points or creating disjoint paths.
 
         Args:
-            flow (FlowgraphSchema): The flowgraph to validate against.
+            flow (Flowgraph): The flowgraph to validate against.
             from_steps (list[str], optional): List of start steps. Defaults to None.
             to_steps (list[str], optional): List of end steps. Defaults to None.
             prune_nodes (list[tuple(str,str)], optional): List of nodes to prune.

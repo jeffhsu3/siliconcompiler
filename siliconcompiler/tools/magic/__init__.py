@@ -15,7 +15,7 @@ import shutil
 import os.path
 
 from siliconcompiler.schema.parametervalue import PathNodeValue
-from siliconcompiler import TaskSchema
+from siliconcompiler.tool import TaskSchema
 
 
 class MagicTask(TaskSchema):
@@ -46,13 +46,19 @@ class MagicTask(TaskSchema):
         self.add_commandline_option("-noc")
         self.add_commandline_option("-dnull")
 
-        self.add_input_file(ext="gds")
+        if f"{self.design_topmodule}.gds" in self.get_files_from_input_nodes():
+            self.add_input_file(ext="gds")
+        else:
+            for lib, fileset in self.project.get_filesets():
+                if lib.has_file(fileset=fileset, filetype="gds"):
+                    self.add_required_key(lib, "fileset", fileset, "file", "gds")
 
         self.add_regex("errors", r'^Error')
         self.add_regex("warnings", r'warning')
 
         if self.get("var", "read_lef"):
-            self.add_required_tool_key("var", "read_lef")
+            self.add_required_key("var", "read_lef")
+        self.add_required_key("asic", "pdk")
 
     def pre_process(self):
         super().pre_process()

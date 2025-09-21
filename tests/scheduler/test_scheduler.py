@@ -7,7 +7,7 @@ import os.path
 
 from unittest.mock import patch
 
-from siliconcompiler import Project, FlowgraphSchema, DesignSchema, NodeStatus
+from siliconcompiler import Project, Flowgraph, Design, NodeStatus
 from siliconcompiler.scheduler import Scheduler
 from siliconcompiler.schema import EditableSchema, Parameter
 
@@ -20,7 +20,7 @@ def gcd_nop_project(gcd_design):
     project.add_fileset("rtl")
     project.add_fileset("sdc")
 
-    flow = FlowgraphSchema("nopflow")
+    flow = Flowgraph("nopflow")
     flow.node("stepone", NOPTask())
     flow.node("steptwo", NOPTask())
     flow.node("stepthree", NOPTask())
@@ -41,9 +41,9 @@ def remove_display_environment():
 
 @pytest.fixture
 def basic_project():
-    flow = FlowgraphSchema("test")
+    flow = Flowgraph("test")
     flow.node("stepone", NOPTask())
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
     proj = Project(design)
@@ -55,7 +55,7 @@ def basic_project():
 
 @pytest.fixture
 def basic_project_no_flow():
-    design = DesignSchema("testdesign")
+    design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
     proj = Project(design)
@@ -66,7 +66,7 @@ def basic_project_no_flow():
 
 def test_init_no_flow():
     with pytest.raises(ValueError, match="flow must be specified"):
-        Scheduler(Project(DesignSchema("testdesign")))
+        Scheduler(Project(Design("testdesign")))
 
 
 def test_init_flow_not_defined(basic_project):
@@ -76,14 +76,14 @@ def test_init_flow_not_defined(basic_project):
 
 
 def test_init_flow_not_valid(basic_project):
-    with patch("siliconcompiler.flowgraph.FlowgraphSchema.validate") as call:
+    with patch("siliconcompiler.flowgraph.Flowgraph.validate") as call:
         call.return_value = False
         with pytest.raises(ValueError, match="test flowgraph contains errors and cannot be run."):
             Scheduler(basic_project)
 
 
 def test_init_flow_runtime_not_valid(basic_project):
-    with patch("siliconcompiler.flowgraph.FlowgraphSchema.validate") as call0, \
+    with patch("siliconcompiler.flowgraph.Flowgraph.validate") as call0, \
          patch("siliconcompiler.flowgraph.RuntimeFlowgraph.validate") as call1:
         call0.return_value = True
         call1.return_value = False
@@ -312,7 +312,7 @@ def test_check_flowgraph_io_basic(basic_project, caplog):
 
 
 def test_check_flowgraph_io_with_files(basic_project_no_flow, caplog):
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     flow.node("stepone", NOPTask())
     flow.node("steptwo", NOPTask())
     flow.edge("stepone", "steptwo")
@@ -332,7 +332,7 @@ def test_check_flowgraph_io_with_files(basic_project_no_flow, caplog):
 
 
 def test_check_flowgraph_io_with_files_join(basic_project_no_flow, caplog):
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     flow.node("stepone", NOPTask())
     flow.node("steptwo", NOPTask())
     flow.node("dojoin", NOPTask())
@@ -362,7 +362,7 @@ def test_check_flowgraph_io_with_files_join(basic_project_no_flow, caplog):
 
 
 def test_check_flowgraph_io_with_files_join_extra_files(basic_project_no_flow, caplog):
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     flow.node("stepone", NOPTask())
     flow.node("steptwo", NOPTask())
     flow.node("dojoin", NOPTask())
@@ -391,7 +391,7 @@ def test_check_flowgraph_io_with_files_join_extra_files(basic_project_no_flow, c
 
 
 def test_check_flowgraph_io_with_files_missing_input(basic_project_no_flow, caplog):
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     flow.node("stepone", NOPTask())
     flow.node("steptwo", NOPTask())
     flow.edge("stepone", "steptwo")
@@ -412,7 +412,7 @@ def test_check_flowgraph_io_with_files_missing_input(basic_project_no_flow, capl
 
 
 def test_check_flowgraph_io_with_files_multple_input(basic_project_no_flow, caplog):
-    flow = FlowgraphSchema("testflow")
+    flow = Flowgraph("testflow")
     flow.node("stepone", NOPTask(), index=0)
     flow.node("stepone", NOPTask(), index=1)
     flow.node("steptwo", NOPTask())
@@ -445,17 +445,17 @@ def test_rerun(gcd_nop_project):
     gcd_nop_project.set('option', 'to', ['steptwo'])
     assert gcd_nop_project.run()
 
-    assert run_copy.get("record", "endtime", step="steptwo", index="0") != \
-        gcd_nop_project.get("record", "endtime", step="steptwo", index="0")
+    assert run_copy.history("job0").get("record", "endtime", step="steptwo", index="0") != \
+        gcd_nop_project.history("job0").get("record", "endtime", step="steptwo", index="0")
 
-    assert run_copy.get("record", "status", step="steptwo", index="0") == \
+    assert run_copy.history("job0").get("record", "status", step="steptwo", index="0") == \
         NodeStatus.SUCCESS
-    assert run_copy.get("record", "status", step="stepthree", index="0") == \
+    assert run_copy.history("job0").get("record", "status", step="stepthree", index="0") == \
         NodeStatus.SUCCESS
 
-    assert gcd_nop_project.get("record", "status", step="steptwo", index="0") == \
+    assert gcd_nop_project.history("job0").get("record", "status", step="steptwo", index="0") == \
         NodeStatus.SUCCESS
-    assert gcd_nop_project.get("record", "status", step="stepthree", index="0") == \
+    assert gcd_nop_project.history("job0").get("record", "status", step="stepthree", index="0") == \
         NodeStatus.PENDING
 
 
@@ -465,21 +465,21 @@ def test_resume_normal(gcd_nop_project):
     time.sleep(1)  # delay to ensure timestamps differ
     assert gcd_nop_project.run()
 
-    assert run_copy.get("record", "endtime", step="steptwo", index="0") == \
-        gcd_nop_project.get("record", "endtime", step="steptwo", index="0")
+    assert run_copy.history("job0").get("record", "endtime", step="steptwo", index="0") == \
+        gcd_nop_project.history("job0").get("record", "endtime", step="steptwo", index="0")
 
-    assert run_copy.get("record", "status", step="steptwo", index="0") == \
+    assert run_copy.history("job0").get("record", "status", step="steptwo", index="0") == \
         NodeStatus.SUCCESS
-    assert run_copy.get("record", "status", step="stepthree", index="0") == \
+    assert run_copy.history("job0").get("record", "status", step="stepthree", index="0") == \
         NodeStatus.SUCCESS
-    assert gcd_nop_project.get("record", "status", step="stepfour", index="0") == \
+    assert gcd_nop_project.history("job0").get("record", "status", step="stepfour", index="0") == \
         NodeStatus.SUCCESS
 
-    assert gcd_nop_project.get("record", "status", step="steptwo", index="0") == \
+    assert gcd_nop_project.history("job0").get("record", "status", step="steptwo", index="0") == \
         NodeStatus.SUCCESS
-    assert gcd_nop_project.get("record", "status", step="stepthree", index="0") == \
+    assert gcd_nop_project.history("job0").get("record", "status", step="stepthree", index="0") == \
         NodeStatus.SUCCESS
-    assert gcd_nop_project.get("record", "status", step="stepfour", index="0") == \
+    assert gcd_nop_project.history("job0").get("record", "status", step="stepfour", index="0") == \
         NodeStatus.SUCCESS
 
 
@@ -497,25 +497,25 @@ def test_resume_value_changed(gcd_nop_project):
     gcd_nop_project.logger.setLevel(logging.DEBUG)
     assert gcd_nop_project.run()
 
-    assert run_copy.get("record", "endtime", step="steptwo", index="0") == \
-        gcd_nop_project.get("record", "endtime", step="steptwo", index="0")
+    assert run_copy.history("job0").get("record", "endtime", step="steptwo", index="0") == \
+        gcd_nop_project.history("job0").get("record", "endtime", step="steptwo", index="0")
 
-    assert run_copy.get("record", "endtime", step="stepthree", index="0") != \
-        gcd_nop_project.get("record", "endtime", step="stepthree", index="0")
+    assert run_copy.history("job0").get("record", "endtime", step="stepthree", index="0") != \
+        gcd_nop_project.history("job0").get("record", "endtime", step="stepthree", index="0")
 
-    assert run_copy.get("record", "endtime", step="stepfour", index="0") != \
-        gcd_nop_project.get("record", "endtime", step="stepfour", index="0")
+    assert run_copy.history("job0").get("record", "endtime", step="stepfour", index="0") != \
+        gcd_nop_project.history("job0").get("record", "endtime", step="stepfour", index="0")
 
-    assert run_copy.get("record", "status", step="steptwo", index="0") == \
+    assert run_copy.history("job0").get("record", "status", step="steptwo", index="0") == \
         NodeStatus.SUCCESS
-    assert run_copy.get("record", "status", step="stepthree", index="0") == \
+    assert run_copy.history("job0").get("record", "status", step="stepthree", index="0") == \
         NodeStatus.SUCCESS
-    assert run_copy.get("record", "status", step="stepfour", index="0") == \
+    assert run_copy.history("job0").get("record", "status", step="stepfour", index="0") == \
         NodeStatus.SUCCESS
 
-    assert gcd_nop_project.get("record", "status", step="steptwo", index="0") == \
+    assert gcd_nop_project.history("job0").get("record", "status", step="steptwo", index="0") == \
         NodeStatus.SUCCESS
-    assert gcd_nop_project.get("record", "status", step="stepthree", index="0") == \
+    assert gcd_nop_project.history("job0").get("record", "status", step="stepthree", index="0") == \
         NodeStatus.SUCCESS
-    assert gcd_nop_project.get("record", "status", step="stepfour", index="0") == \
+    assert gcd_nop_project.history("job0").get("record", "status", step="stepfour", index="0") == \
         NodeStatus.SUCCESS
