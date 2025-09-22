@@ -1,3 +1,5 @@
+import graphviz
+import hashlib
 import importlib
 import inspect
 import shlex
@@ -14,7 +16,8 @@ from docutils.parsers.rst import directives
 from siliconcompiler.schema import utils, BaseSchema, Parameter, NamedSchema, EditableSchema
 from siliconcompiler.schema.docschema import DocsSchema
 from siliconcompiler.schema.docs.utils import parse_rst, link, para, \
-    literalblock, build_section_with_target, keypath, build_section
+    literalblock, build_section_with_target, keypath, build_section, \
+    image
 from siliconcompiler.utils import get_plugins
 
 
@@ -22,7 +25,6 @@ class SchemaGen(SphinxDirective):
 
     option_spec = {
         'root': str,
-        'add_class': directives.flag,
         'add_methods': directives.flag,
         'schema_only': directives.flag,
         'reference_class': str,
@@ -89,12 +91,6 @@ class SchemaGen(SphinxDirective):
             if docstring:
                 parse_rst(self.state, docstring, schema_sec)
 
-            if "add_class" in self.options:
-                # Add reference to class docs
-                cls_ref = nodes.inline('')
-                parse_rst(self.state, f'Class: :class:`{cls}<{module}.{cls}>`', cls_ref)
-                schema_sec += cls_ref
-
             src_link = None
             src_file = inspect.getfile(schema_cls)
             for docs_link in get_plugins("docs", name="linkcode"):
@@ -160,7 +156,6 @@ class ToolGen(SchemaGen):
 
     def run(self):
         root = self.options["root"]
-        self.options["add_class"] = True
         self.options["add_methods"] = True
         self.options["reference_class"] = "siliconcompiler.tool/TaskSchema"
 
@@ -306,6 +301,125 @@ class AppGen(SphinxDirective):
         return [section]
 
 
+class InheritanceGen(SphinxDirective):
+
+    option_spec = {
+        'classes': str,
+        'user_cls': str
+    }
+
+    def walk_cls(self, cls):
+        bases = set()
+        conns = set()
+        for base in cls.__bases__:
+            if base.__name__ == "object":
+                continue
+            conns.add((base.__name__, cls.__name__))
+            bases.add(base)
+        for base in bases:
+            conns.update(self.walk_cls(base))
+        return conns
+
+    def run(self):
+        classes = set()
+        for cls in self.options['classes'].split(","):
+            module, cls = cls.strip().split("/")
+            classes.add(getattr(importlib.import_module(module), cls))
+        user_cls = set()
+        for cls in self.options.get("user_cls", self.options['classes']).split(","):
+            module, cls = cls.strip().split("/")
+            cls = getattr(importlib.import_module(module), cls)
+            user_cls.add(cls.__name__)
+
+        dot = graphviz.Digraph(format="png")
+        dot.graph_attr['rankdir'] = "TB"
+        dot.attr(bgcolor="white")
+
+        conns = set()
+        for cls in classes:
+            conns.update(self.walk_cls(cls))
+        conns = sorted(conns)
+        nodes = set()
+        for cls0, cls1 in conns:
+            nodes.add(cls0)
+            nodes.add(cls1)
+        nodes = sorted(nodes)
+
+        for cls in nodes:
+            if cls in user_cls:
+                continue
+            dot.node(cls, cls, shape="Mdiamond")
+
+        with dot.subgraph(name="userclasses") as user_graph:
+            user_graph.graph_attr["cluster"] = "true"
+            user_graph.graph_attr["color"] = "black"
+            for cls in nodes:
+                if cls not in user_cls:
+                    continue
+                user_graph.node(cls, cls, shape="oval")
+
+        for cls0, cls1 in conns:
+            dot.edge(cls0, cls1)
+
+        fhash = hashlib.md5()
+        for cls in nodes:
+            fhash.update(cls.encode())
+        for cls0, cls1 in conns:
+            fhash.update(cls0.encode())
+            fhash.update(cls1.encode())
+
+        filename = os.path.join(self.env.app.outdir,
+                                f"_images/gen/inherit/{fhash.hexdigest()}")
+
+        dot.render(filename=filename, cleanup=True)
+
+        return [image(f"{filename}.png", center=True)]
+
+
+class AutoSummaryGen(SphinxDirective):
+
+    option_spec = {
+        'class': str,
+        'noschema': directives.flag
+    }
+
+    def run(self):
+        module, cls = self.options['class'].split("/")
+        schema_cls = getattr(importlib.import_module(module), cls)
+
+        methods = set()
+        for name, bind in inspect.getmembers(schema_cls, predicate=callable):
+            if name[0] == "_":
+                continue
+
+            if "noschema" in self.options:
+                if inspect.getmodule(bind).__name__.startswith("siliconcompiler.schema."):
+                    continue
+
+            methods.add(name)
+        methods = sorted([f"{cls}.{meth}" for meth in methods])
+
+        autosum = [
+            f".. currentmodule:: {module}",
+            "",
+            f"Class :class:`{module}.{cls}`",
+            "",
+            ".. autosummary::",
+            "    :nosignatures:",
+            ""]
+        for meth in methods:
+            autosum.append(f"    {meth}")
+        autosum.append("")
+
+        p = para("")
+        parse_rst(self.state, "\n".join(autosum), p)
+
+        section = build_section(cls, "autosummary" + self.options['class'])
+        section += p
+
+        return [section]
+
+
 class SCDomain(StandardDomain):
     name = 'sc'
 
@@ -363,6 +477,8 @@ def setup(app):
     app.add_directive('scapp', AppGen)
     app.add_directive('sctool', ToolGen)
     app.add_directive('sctarget', TargetGen)
+    app.add_directive('scclassinherit', InheritanceGen)
+    app.add_directive('scclassautosummary', AutoSummaryGen)
 
     app.add_role('keypath', keypath_role)
 
