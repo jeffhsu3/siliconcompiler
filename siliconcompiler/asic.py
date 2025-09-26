@@ -7,7 +7,7 @@ from siliconcompiler.schema import EditableSchema, Parameter, Scope
 from siliconcompiler.schema.utils import trim
 
 from siliconcompiler import Project, sc_open
-from siliconcompiler.tool import TaskSchema
+from siliconcompiler import Task
 
 from siliconcompiler.constraints import \
     ASICTimingConstraintSchema, ASICAreaConstraint, \
@@ -65,7 +65,7 @@ class ASICProject(Project):
                 "{str}",
                 scope=Scope.GLOBAL,
                 shorthelp="ASIC: logic libraries",
-                example=["api: chip.set('asic', 'asiclib', 'nangate45')"],
+                example=["api: asic.set('asic', 'asiclib', 'nangate45')"],
                 help=trim("""List of all selected logic libraries
                     to use for optimization for a given library architecture
                     (9T, 11T, etc).""")))
@@ -75,7 +75,7 @@ class ASICProject(Project):
                 "str",
                 scope=Scope.GLOBAL,
                 shorthelp="ASIC: delay model",
-                example=["api: chip.set('asic', 'delaymodel', 'ccs')"],
+                example=["api: asic.set('asic', 'delaymodel', 'ccs')"],
                 help=trim("""Delay model to use for the target libs. Commonly supported values
                     are nldm and ccs.""")))
 
@@ -135,10 +135,10 @@ class ASICProject(Project):
             return
 
         if isinstance(obj, StdCellLibrary):
-            if not self.has_library(obj.name):
+            if not self._has_library(obj.name):
                 EditableSchema(self).insert("library", obj.name, obj)
         elif isinstance(obj, PDK):
-            if not self.has_library(obj.name):
+            if not self._has_library(obj.name):
                 EditableSchema(self).insert("library", obj.name, obj)
         else:
             return super().add_dep(obj)
@@ -383,7 +383,7 @@ class ASICProject(Project):
 
         if not self.get("asic", "pdk") and self.get("asic", "mainlib"):
             mainlib = None
-            if self.has_library(self.get("asic", "mainlib")):
+            if self._has_library(self.get("asic", "mainlib")):
                 mainlib = self.get("library", self.get("asic", "mainlib"), field="schema")
             if mainlib:
                 mainlib_pdk = mainlib.get("asic", "pdk")
@@ -469,9 +469,9 @@ class ASICProject(Project):
         return info
 
 
-class ASICTaskSchema(TaskSchema):
+class ASICTask(Task):
     """
-    A TaskSchema with helper methods for tasks in a standard ASIC flow,
+    A Task with helper methods for tasks in a standard ASIC flow,
     providing easy access to PDK and standard cell library information.
     """
     @property

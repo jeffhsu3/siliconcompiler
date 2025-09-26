@@ -9,6 +9,8 @@ import uuid
 import os.path
 
 from siliconcompiler import utils
+from siliconcompiler.utils.curation import collect
+from siliconcompiler.utils.paths import collectiondir, jobdir
 from siliconcompiler.package import RemoteResolver
 from siliconcompiler.flowgraph import RuntimeFlowgraph
 from siliconcompiler.scheduler import SchedulerNode
@@ -23,19 +25,19 @@ class SlurmSchedulerNode(SchedulerNode):
     to execute the step on a compute node.
     """
 
-    def __init__(self, chip, step, index, replay=False):
+    def __init__(self, project, step, index, replay=False):
         """Initializes a SlurmSchedulerNode.
 
         Args:
-            chip (Chip): The parent Chip object.
+            project (Project): The parent project object.
             step (str): The step name in the flowgraph.
             index (str): The index for the step.
             replay (bool): If True, sets up the node to replay a previous run.
         """
-        super().__init__(chip, step, index, replay=replay)
+        super().__init__(project, step, index, replay=replay)
 
         # Get the temporary UID associated with this job run.
-        self.__job_hash = chip.get('record', 'remoteid')
+        self.__job_hash = project.get('record', 'remoteid')
         if not self.__job_hash:
             # Generate a new uuid since it was not set
             self.__job_hash = uuid.uuid4().hex
@@ -51,18 +53,18 @@ class SlurmSchedulerNode(SchedulerNode):
         A static pre-processing hook for the Slurm scheduler.
 
         This method checks if the compilation flow starts from an entry node.
-        If so, it calls `chip.collect()` to gather all necessary source files
+        If so, it calls :meth:`.collect()` to gather all necessary source files
         into a central location before any remote jobs are submitted. This
         ensures that compute nodes have access to all required source files.
 
         Args:
-            chip (Chip): The Chip object to perform pre-processing on.
+            project (Project): The project object to perform pre-processing on.
         """
-        if os.path.exists(project.getcollectiondir()):
+        if os.path.exists(collectiondir(project)):
             # nothing to do
             return
 
-        collect = False
+        do_collect = False
         flow = project.get('option', 'flow')
         entry_nodes = project.get("flowgraph", flow, field="schema").get_entry_nodes()
 
@@ -74,10 +76,10 @@ class SlurmSchedulerNode(SchedulerNode):
 
         for (step, index) in runtime.get_nodes():
             if (step, index) in entry_nodes:
-                collect = True
+                do_collect = True
 
-        if collect:
-            project.collect()
+        if do_collect:
+            collect(project)
 
     @property
     def is_local(self):
@@ -89,13 +91,13 @@ class SlurmSchedulerNode(SchedulerNode):
         """Gets the directory for storing Slurm-related configuration files.
 
         Args:
-            chip (Chip): The Chip object.
+            project (Project): The project object.
 
         Returns:
             str: The path to the configuration directory.
         """
 
-        return os.path.join(project.getworkdir(), 'sc_configs')
+        return os.path.join(jobdir(project), 'sc_configs')
 
     @staticmethod
     def get_job_name(jobhash, step, index):
@@ -202,7 +204,7 @@ class SlurmSchedulerNode(SchedulerNode):
         schedule_cmd = ['srun',
                         '--exclusive',
                         '--partition', partition,
-                        '--chdir', self.project.cwd,
+                        '--chdir', self.project_cwd,
                         '--job-name', SlurmSchedulerNode.get_job_name(self.__job_hash,
                                                                       self.step, self.index),
                         '--output', log_file]

@@ -4,11 +4,12 @@ import os
 import os.path
 
 
-from siliconcompiler.tool import ShowTaskSchema
+from siliconcompiler import ShowTask
 from siliconcompiler.tools.openroad._apr import APRTask, OpenROADSTAParameter
+from siliconcompiler.utils.paths import workdir
 
 
-class ShowTask(ShowTaskSchema, APRTask, OpenROADSTAParameter):
+class ShowTask(ShowTask, APRTask, OpenROADSTAParameter):
     '''
     Show a design in openroad
     '''
@@ -56,7 +57,7 @@ class ShowTask(ShowTaskSchema, APRTask, OpenROADSTAParameter):
                 pass
 
         if show_step and show_index:
-            sdc_file = os.path.join(job_root.getworkdir(show_step, show_index),
+            sdc_file = os.path.join(workdir(job_root, step=show_step, index=show_index),
                                     "output",
                                     f"{self.design_topmodule}.sdc")
             if sdc_file and os.path.exists(sdc_file):

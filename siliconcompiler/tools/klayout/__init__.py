@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import List, Union
 
 from siliconcompiler import PDK, StdCellLibrary, sc_open
-from siliconcompiler.asic import ASICTaskSchema
+from siliconcompiler.asic import ASICTask
 
 
 class KLayoutPDK(PDK):
@@ -112,7 +112,7 @@ class KLayoutLibrary(StdCellLibrary):
             self.add("tool", "klayout", "allow_missing_cell", cell)
 
 
-class KLayoutTask(ASICTaskSchema):
+class KLayoutTask(ASICTask):
     def __init__(self):
         super().__init__()
 
@@ -209,7 +209,7 @@ class KLayoutTask(ASICTaskSchema):
             design.set_topmodule("top")
         proj = ASICProject(design)
         proj.add_fileset("docs")
-        proj.load_target(freepdk45_demo.setup)
+        freepdk45_demo(proj)
         flow = Flowgraph("docsflow")
         flow.node("<step>", cls(), index="<index>")
         proj.set_flow(flow)

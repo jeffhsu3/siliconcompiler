@@ -17,6 +17,8 @@ from siliconcompiler.tools.klayout.export import ExportTask
 from siliconcompiler.tools.klayout import KLayoutLibrary
 
 from tools.inputimporter import ImporterTask
+from siliconcompiler.utils.paths import workdir
+from siliconcompiler.tools import get_task
 
 
 @pytest.fixture
@@ -56,7 +58,7 @@ def test_export(datadir):
 
     proj = ASICProject(design)
     proj.add_fileset(["layout"])
-    proj.load_target(freepdk45_demo.setup)
+    freepdk45_demo(proj)
     proj.add_asiclib(lib)
 
     flow = Flowgraph("testflow")
@@ -65,10 +67,10 @@ def test_export(datadir):
     flow.edge('import', 'export')
     proj.set_flow(flow)
 
-    proj.get_task(filter=ImporterTask).set("var", "input_files",
-                                           os.path.join(datadir, 'heartbeat_wrapper.def'))
+    get_task(proj, filter=ImporterTask).set("var", "input_files",
+                                            os.path.join(datadir, 'heartbeat_wrapper.def'))
 
-    proj.get_task(filter=export.ExportTask).set("var", "timestamps", False)
+    get_task(proj, filter=export.ExportTask).set("var", "timestamps", False)
 
     assert proj.run()
     result = proj.find_result('gds', 'export')
@@ -88,7 +90,7 @@ def test_klayout_operations(datadir):
 
     proj = ASICProject(design)
     proj.add_fileset(["layout"])
-    proj.load_target(freepdk45_demo.setup)
+    freepdk45_demo(proj)
 
     flow = Flowgraph("testflow")
     flow.node('import', ImporterTask())
@@ -98,9 +100,9 @@ def test_klayout_operations(datadir):
     flow.edge('ops1', 'ops2')
     proj.set_flow(flow)
 
-    proj.get_task(filter=ImporterTask).set("var", "input_files",
-                                           os.path.join(datadir, 'heartbeat.gds'))
-    ops: operations.OperationsTask = proj.get_task(filter=operations.OperationsTask)
+    get_task(proj, filter=ImporterTask).set("var", "input_files",
+                                            os.path.join(datadir, 'heartbeat.gds'))
+    ops: operations.OperationsTask = get_task(proj, filter=operations.OperationsTask)
     ops.set("var", "timestamps", False)
 
     # Ops1
@@ -128,7 +130,7 @@ def test_klayout_operations(datadir):
 
     assert proj.run()
 
-    ops1_result = proj.getworkdir(step='ops1')
+    ops1_result = workdir(proj, step='ops1')
     for op_file, op_hash in [('rotate.gds', '0048802f8d2fedf038cb6cfdc5ebc989'),
                              ('outline.gds', '4bf006f5f465ec9c42cd1ef80677424e'),
                              ('rename.gds', '4991f2267811517b8f7e73924b92128e')]:
@@ -138,7 +140,7 @@ def test_klayout_operations(datadir):
             data = gds_file.read()
             assert hashlib.md5(data).hexdigest() == op_hash
 
-    ops2_result = proj.getworkdir(step='ops2')
+    ops2_result = workdir(proj, step='ops2')
     for op_file, op_hash in [('rotate.gds', 'ee2e5b9646ca4f7e941dd1767af47188'),
                              ('outline.gds', '753e1a252baaa6c9dbb3e9528a3eef3c'),
                              ('add_top.gds', '2c6f39ff49088278bafa51adfd761e61'),
@@ -179,9 +181,9 @@ def test_drc_pass(setup_pdk_test, datadir):
     flow.edge('import', 'drc')
     proj.set_flow(flow)
 
-    proj.get_task(filter=ImporterTask).set(
+    get_task(proj, filter=ImporterTask).set(
         "var", "input_files", os.path.join(datadir, "klayout_pdk", 'interposer.gds'))
-    proj.get_task(filter=drc.DRCTask).set("var", "drc_name", "drc")
+    get_task(proj, filter=drc.DRCTask).set("var", "drc_name", "drc")
 
     assert proj.run()
     assert proj.history("job0").get('metric', 'drcs', step='drc', index='0') == 0
@@ -209,9 +211,9 @@ def test_drc_fail(setup_pdk_test, datadir):
     flow.edge('import', 'drc')
     proj.set_flow(flow)
 
-    proj.get_task(filter=ImporterTask).set(
+    get_task(proj, filter=ImporterTask).set(
         "var", "input_files", os.path.join(datadir, "klayout_pdk", "withdrcs", 'interposer.gds'))
-    proj.get_task(filter=drc.DRCTask).set("var", "drc_name", "drc")
+    get_task(proj, filter=drc.DRCTask).set("var", "drc_name", "drc")
 
     assert proj.run()
     assert proj.history("job0").get('metric', 'drcs', step='drc', index='0') == 12
@@ -241,9 +243,9 @@ def test_convert_drc(setup_pdk_test, datadir):
     flow.edge('drc', 'convert')
     proj.set_flow(flow)
 
-    proj.get_task(filter=ImporterTask).set(
+    get_task(proj, filter=ImporterTask).set(
         "var", "input_files", os.path.join(datadir, "klayout_pdk", "withdrcs", 'interposer.gds'))
-    proj.get_task(filter=drc.DRCTask).set("var", "drc_name", "drc")
+    get_task(proj, filter=drc.DRCTask).set("var", "drc_name", "drc")
 
     assert proj.run()
     assert proj.history("job0").get('metric', 'drcs', step='drc', index='0') == 12

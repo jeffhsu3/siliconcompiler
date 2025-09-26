@@ -22,6 +22,7 @@ from siliconcompiler.package import Resolver
 from siliconcompiler.schema_support.record import RecordTime, RecordTool
 from siliconcompiler.schema import Journal
 from siliconcompiler.scheduler import send_messages
+from siliconcompiler.utils.paths import workdir, jobdir, collectiondir
 
 
 class SchedulerNode:
@@ -56,7 +57,7 @@ class SchedulerNode:
         self.__index = index
         self.__project = project
 
-        self.__name = self.__project.design.name
+        self.__name = self.__project.name
         self.__topmodule = self.__project.get(
             "library",
             self.__name,
@@ -84,9 +85,9 @@ class SchedulerNode:
         self.__is_entry_node = (self.__step, self.__index) in \
             self.__project.get("flowgraph", flow, field="schema").get_entry_nodes()
 
-        self.__cwd = self.__project.cwd
-        self.__jobworkdir = self.__project.getworkdir()
-        self.__workdir = self.__project.getworkdir(step=self.__step, index=self.__index)
+        self.__cwd = self.__project._Project__cwd
+        self.__jobworkdir = jobdir(self.__project)
+        self.__workdir = workdir(self.__project, step=self.__step, index=self.__index)
         self.__manifests = {
             "input": os.path.join(self.__workdir, "inputs", f"{self.__name}.pkg.json"),
             "output": os.path.join(self.__workdir, "outputs", f"{self.__name}.pkg.json")
@@ -96,7 +97,7 @@ class SchedulerNode:
             "exe": os.path.join(self.__workdir, f"{self.__step}.log")
         }
         self.__replay_script = os.path.join(self.__workdir, "replay.sh")
-        self.__collection_path = self.__project.getcollectiondir()
+        self.__collection_path = collectiondir(self.__project)
 
         self.set_queue(None, None)
         self.__setup_schema_access()
@@ -125,7 +126,7 @@ class SchedulerNode:
         Creates a new SchedulerNode for a different step/index.
 
         This allows for context switching to inspect or interact with other nodes
-        within the same chip context.
+        within the same project context.
 
         Args:
             step (str): The step name of the new node.
@@ -354,7 +355,7 @@ class SchedulerNode:
         Raises:
             Exception: Propagates any exception from the task's setup() method.
         """
-        from siliconcompiler.tool import TaskSkip
+        from siliconcompiler import TaskSkip
 
         with self.__task.runtime(self) as task:
             # Run node setup.
@@ -667,7 +668,7 @@ class SchedulerNode:
                 self.halt(f'Halting step due to previous error in {in_step}/{in_index}')
 
             output_dir = os.path.join(
-                self.__project.getworkdir(step=in_step, index=in_index), "outputs")
+                workdir(self.__project, step=in_step, index=in_index), "outputs")
             if not os.path.isdir(output_dir):
                 self.halt(f'Unable to locate outputs directory for {in_step}/{in_index}: '
                           f'{output_dir}')
@@ -783,7 +784,7 @@ class SchedulerNode:
 
         Note: Since this method may run in its own process with a separate
         address space, any changes made to the schema are communicated through
-        reading/writing the chip manifest to the filesystem.
+        reading/writing the project manifest to the filesystem.
         """
 
         # Setup logger
@@ -865,7 +866,7 @@ class SchedulerNode:
         steps for the node's task. It manages the tool's environment, checks
         for return codes, and handles log file parsing and error reporting.
         """
-        from siliconcompiler.tool import TaskSkip
+        from siliconcompiler import TaskSkip
 
         self.logger.info(f'Running in {self.__workdir}')
 
@@ -885,7 +886,7 @@ class SchedulerNode:
             for in_step, in_index in self.__record.get('inputnode',
                                                        step=self.__step, index=self.__index):
                 required_outputs = set(self.__task.get('output'))
-                in_workdir = self.__project.getworkdir(step=in_step, index=in_index)
+                in_workdir = workdir(self.__project, step=in_step, index=in_index)
                 for outfile in os.scandir(f"{in_workdir}/outputs"):
                     if outfile.name == f'{self.__name}.pkg.json':
                         # Dont forward manifest
@@ -1214,7 +1215,7 @@ class SchedulerNode:
 
         org_name = self.__project.get("option", "jobname")
         self.__project.set("option", "jobname", source)
-        copy_from = self.__project.getworkdir(step=self.__step, index=self.__index)
+        copy_from = workdir(self.__project, step=self.__step, index=self.__index)
         self.__project.set("option", "jobname", org_name)
 
         if not os.path.exists(copy_from):

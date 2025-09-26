@@ -11,6 +11,7 @@ from siliconcompiler.schema.parameter import Parameter, Scope
 from siliconcompiler.schema.utils import trim
 
 from siliconcompiler.package import Resolver
+from siliconcompiler.utils.paths import collectiondir
 
 
 class PathSchemaBase(BaseSchema):
@@ -49,11 +50,8 @@ class PathSchemaBase(BaseSchema):
             the schema.
         """
         schema_root = self._parent(root=True)
-        cwd = getattr(schema_root, "cwd", os.getcwd())
-        collection_dir = getattr(schema_root, "collection_dir",
-                                 getattr(schema_root, "getcollectiondir", None))
-        if collection_dir:
-            collection_dir = collection_dir()
+        cwd = getattr(schema_root, "_Project__cwd", os.getcwd())
+        collection_dir = collectiondir(schema_root)
 
         return super().find_files(*keypath,
                                   missing_ok=missing_ok,
@@ -72,15 +70,11 @@ class PathSchemaBase(BaseSchema):
             True if all file paths are valid, otherwise False.
         '''
         schema_root = self._parent(root=True)
-        cwd = getattr(schema_root, "cwd", os.getcwd())
+        cwd = getattr(schema_root, "_Project__cwd", os.getcwd())
         logger = getattr(schema_root,
                          "logger",
                          logging.getLogger("siliconcompiler.check_filepaths"))
-        collection_dir = getattr(schema_root, "collection_dir",
-                                 getattr(schema_root, "getcollectiondir",
-                                         None))
-        if collection_dir:
-            collection_dir = collection_dir()
+        collection_dir = collectiondir(schema_root)
 
         return super().check_filepaths(
             ignore_keys=ignore_keys,
@@ -108,7 +102,7 @@ class PathSchemaBase(BaseSchema):
         Args:
             *keypath(str): Keypath to parameter.
             update (bool): If True, the hash values are recorded in the
-                chip object manifest.
+                project object manifest.
             check (bool): If True, checks the newly computed hash against
                 the stored hash.
             verbose (bool): If True, generates log messages.
@@ -126,14 +120,11 @@ class PathSchemaBase(BaseSchema):
             Computes, stores, and returns hashes of files in :keypath:`input, rtl, verilog`.
         '''
         schema_root = self._parent(root=True)
-        cwd = getattr(schema_root, "cwd", os.getcwd())
-        collection_dir = getattr(schema_root, "collection_dir",
-                                 getattr(schema_root, "getcollectiondir", None))
+        cwd = getattr(schema_root, "_Project__cwd", os.getcwd())
         logger = getattr(schema_root,
                          "logger",
-                         logging.getLogger("siliconcompiler.check_filepaths"))
-        if collection_dir:
-            collection_dir = collection_dir()
+                         logging.getLogger("siliconcompiler.hash_files"))
+        collection_dir = collectiondir(schema_root)
 
         if verbose:
             logger.info(f"Computing hash value for [{','.join([*self._keypath, *keypath])}]")
@@ -209,7 +200,7 @@ class PathSchemaSimpleBase(PathSchemaBase):
         Args:
             *keypath(str): Keypath to parameter.
             update (bool): If True, the hash values are recorded in the
-                chip object manifest.
+                project object manifest.
             check (bool): If True, checks the newly computed hash against
                 the stored hash.
             verbose (bool): If True, generates log messages.
@@ -249,7 +240,7 @@ class PathSchema(PathSchemaBase):
                 scope=Scope.GLOBAL,
                 shorthelp="Data directory path",
                 example=[
-                    "api: chip.set('dataroot', "
+                    "api: project.set('dataroot', "
                     "'freepdk45_data', 'path', 'ssh://git@github.com/siliconcompiler/freepdk45/')"],
                 help=trim("""
                     Data directory path, this points the location where the data can be
@@ -275,7 +266,7 @@ class PathSchema(PathSchemaBase):
                 scope=Scope.GLOBAL,
                 shorthelp="Data directory reference tag/version",
                 example=[
-                    "api: chip.set('dataroot', 'freepdk45_data', 'tag', '07ec4aa')"],
+                    "api: project.set('dataroot', 'freepdk45_data', 'tag', '07ec4aa')"],
                 help=trim("""
                     Data directory reference tag. The meaning of the this tag depends on the
                     context of the path.

@@ -6,7 +6,7 @@ import os.path
 from unittest.mock import patch
 
 from siliconcompiler import ASICProject, Design, Flowgraph
-from siliconcompiler.asic import ASICTaskSchema
+from siliconcompiler.asic import ASICTask
 from siliconcompiler.library import ToolLibrarySchema
 
 from siliconcompiler.asic import CellArea
@@ -252,9 +252,9 @@ def test_add_dep_handoff():
         add_dep.assert_called_once_with(None)
 
 
-def test_check_manifest_empty(caplog):
+def test_check_manifest_empty(monkeypatch, caplog):
     proj = ASICProject()
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     with patch("siliconcompiler.Project.check_manifest") as check_manifest:
@@ -267,9 +267,9 @@ def test_check_manifest_empty(caplog):
     assert "[asic,delaymodel] has not been set" in caplog.text
 
 
-def test_check_manifest_missing_pdk(caplog):
+def test_check_manifest_missing_pdk(monkeypatch, caplog):
     proj = ASICProject()
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     proj.set("asic", "pdk", "thispdk")
@@ -284,9 +284,9 @@ def test_check_manifest_missing_pdk(caplog):
     assert "[asic,delaymodel] has not been set" in caplog.text
 
 
-def test_check_manifest_incorrect_type_pdk(caplog):
+def test_check_manifest_incorrect_type_pdk(monkeypatch, caplog):
     proj = ASICProject()
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     proj.add_dep(StdCellLibrary("thislib"))
@@ -302,9 +302,9 @@ def test_check_manifest_incorrect_type_pdk(caplog):
     assert "[asic,delaymodel] has not been set" in caplog.text
 
 
-def test_check_manifest_main_libmissing(caplog):
+def test_check_manifest_main_libmissing(monkeypatch, caplog):
     proj = ASICProject()
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     proj.set_pdk(PDK("thispdk"))
@@ -320,9 +320,9 @@ def test_check_manifest_main_libmissing(caplog):
     assert "[asic,delaymodel] has not been set" in caplog.text
 
 
-def test_check_manifest_asiclib_missing(caplog):
+def test_check_manifest_asiclib_missing(monkeypatch, caplog):
     proj = ASICProject()
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     proj.set_pdk(PDK("thispdk"))
@@ -337,9 +337,9 @@ def test_check_manifest_asiclib_missing(caplog):
     assert "[asic,delaymodel] has not been set" in caplog.text
 
 
-def test_check_manifest_pass(caplog):
+def test_check_manifest_pass(monkeypatch, caplog):
     proj = ASICProject()
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     proj.set_pdk(PDK("thispdk"))
@@ -354,9 +354,9 @@ def test_check_manifest_pass(caplog):
     assert caplog.text == ""
 
 
-def test_check_manifest_pass_missing_mainlib(caplog):
+def test_check_manifest_pass_missing_mainlib(monkeypatch, caplog):
     proj = ASICProject()
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     proj.set_pdk(PDK("thispdk"))
@@ -370,9 +370,9 @@ def test_check_manifest_pass_missing_mainlib(caplog):
     assert "[asic,mainlib] has not been set, this will be inferred" in caplog.text
 
 
-def test_init_run_set_mainlib(caplog):
+def test_init_run_set_mainlib(monkeypatch, caplog):
     proj = ASICProject()
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     proj.set_pdk(PDK("thispdk"))
@@ -387,9 +387,9 @@ def test_init_run_set_mainlib(caplog):
     assert "Setting main library to: thislib" in caplog.text
 
 
-def test_init_run_set_pdk_asiclib(caplog):
+def test_init_run_set_pdk_asiclib(monkeypatch, caplog):
     proj = ASICProject()
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     lib = StdCellLibrary("thislib")
@@ -409,9 +409,9 @@ def test_init_run_set_pdk_asiclib(caplog):
     assert "Adding thislib to [asic,asiclib]" in caplog.text
 
 
-def test_init_run_handling_missing_lib(caplog):
+def test_init_run_handling_missing_lib(monkeypatch, caplog):
     proj = ASICProject()
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     proj.set_mainlib("thislib")
@@ -429,8 +429,6 @@ def test_init_run_handling_missing_lib(caplog):
 
 def test_summary_headers():
     proj = ASICProject()
-    setattr(proj, "_Project__logger", logging.getLogger())
-    proj.logger.setLevel(logging.INFO)
 
     proj.set_pdk("thispdk")
     proj.set_mainlib("thislib")
@@ -476,7 +474,7 @@ def test_asic_mainlib_not_set(running_node):
     project = running_node.project
     project.set("asic", "pdk", "testpdk")
 
-    with ASICTaskSchema().runtime(running_node) as runtool:
+    with ASICTask().runtime(running_node) as runtool:
         with pytest.raises(ValueError, match=r"mainlib has not been defined in \[asic,mainlib\]"):
             runtool.mainlib
 
@@ -486,7 +484,7 @@ def test_asic_mainlib_not_loaded(running_node):
     project.set("asic", "pdk", "testpdk")
     project.set("asic", "mainlib", "testlib")
 
-    with ASICTaskSchema().runtime(running_node) as runtool:
+    with ASICTask().runtime(running_node) as runtool:
         with pytest.raises(LookupError, match="testlib has not been loaded"):
             runtool.mainlib
 
@@ -498,7 +496,7 @@ def test_asic_mainlib(running_node):
     lib = BaseSchema()
     EditableSchema(project).insert("library", "testlib", lib)
 
-    with ASICTaskSchema().runtime(running_node) as runtool:
+    with ASICTask().runtime(running_node) as runtool:
         assert runtool.mainlib is lib
 
 
@@ -509,7 +507,7 @@ def test_asic_pdk_not_set(running_node):
     EditableSchema(project).insert("library", "testlib", lib)
     EditableSchema(lib).insert("asic", "pdk", Parameter("str"))
 
-    with ASICTaskSchema().runtime(running_node) as runtool:
+    with ASICTask().runtime(running_node) as runtool:
         with pytest.raises(ValueError,
                            match=r"pdk has not been defined in \[asic,pdk\]"):
             runtool.pdk
@@ -524,7 +522,7 @@ def test_asic_pdk_not_loaded(running_node):
     EditableSchema(lib).insert("asic", "pdk", Parameter("str"))
     lib.set("asic", "pdk", "testpdk")
 
-    with ASICTaskSchema().runtime(running_node) as runtool:
+    with ASICTask().runtime(running_node) as runtool:
         with pytest.raises(LookupError, match="testpdk has not been loaded"):
             runtool.pdk
 
@@ -540,7 +538,7 @@ def test_asic_pdk(running_node):
     pdk = BaseSchema()
     EditableSchema(project).insert("library", "testpdk", pdk)
 
-    with ASICTaskSchema().runtime(running_node) as runtool:
+    with ASICTask().runtime(running_node) as runtool:
         assert runtool.pdk is pdk
 
 
@@ -556,7 +554,7 @@ def test_asic_set_asic_var_from_lib(running_node):
     EditableSchema(project).insert("library", "testpdk", pdk)
     EditableSchema(pdk).insert("asic", "pdk", Parameter("str"))
 
-    class TestTask(ASICTaskSchema):
+    class TestTask(ASICTask):
         def tool(self):
             return "testtool"
     task = TestTask()
@@ -586,7 +584,7 @@ def test_asic_set_asic_var_from_pdk(running_node):
     EditableSchema(project).insert("library", "testpdk", pdk)
     EditableSchema(pdk).insert("asic", "pdk", Parameter("str"))
 
-    class TestTask(ASICTaskSchema):
+    class TestTask(ASICTask):
         def tool(self):
             return "testtool"
     task = TestTask()
@@ -615,7 +613,7 @@ def test_asic_set_asic_var_from_defvalue(running_node):
     EditableSchema(project).insert("library", "testpdk", pdk)
     EditableSchema(pdk).insert("asic", "pdk", Parameter("str"))
 
-    class TestTask(ASICTaskSchema):
+    class TestTask(ASICTask):
         def tool(self):
             return "testtool"
     task = TestTask()
@@ -641,7 +639,7 @@ def test_asic_set_asic_var_no_value(running_node):
     EditableSchema(project).insert("library", "testpdk", pdk)
     EditableSchema(pdk).insert("asic", "pdk", Parameter("str"))
 
-    class TestTask(ASICTaskSchema):
+    class TestTask(ASICTask):
         def tool(self):
             return "testtool"
     task = TestTask()
@@ -667,7 +665,7 @@ def test_asic_set_asic_var_require_set(running_node):
     EditableSchema(project).insert("library", "testpdk", pdk)
     EditableSchema(pdk).insert("asic", "pdk", Parameter("str"))
 
-    class TestTask(ASICTaskSchema):
+    class TestTask(ASICTask):
         def tool(self):
             return "testtool"
     task = TestTask()
@@ -696,7 +694,7 @@ def test_asic_set_asic_var_skip_main(running_node):
     EditableSchema(project).insert("library", "testpdk", pdk)
     EditableSchema(pdk).insert("asic", "pdk", Parameter("str"))
 
-    class TestTask(ASICTaskSchema):
+    class TestTask(ASICTask):
         def tool(self):
             return "testtool"
     task = TestTask()
@@ -726,7 +724,7 @@ def test_asic_set_asic_var_skip_pdk(running_node):
     EditableSchema(project).insert("library", "testpdk", pdk)
     EditableSchema(pdk).insert("asic", "pdk", Parameter("str"))
 
-    class TestTask(ASICTaskSchema):
+    class TestTask(ASICTask):
         def tool(self):
             return "testtool"
     task = TestTask()
@@ -753,7 +751,7 @@ def test_asic_set_asic_var_dontoverwrite(running_node):
     EditableSchema(project).insert("library", "testpdk", pdk)
     EditableSchema(pdk).insert("asic", "pdk", Parameter("str"))
 
-    class TestTask(ASICTaskSchema):
+    class TestTask(ASICTask):
         def tool(self):
             return "testtool"
     task = TestTask()
@@ -780,7 +778,7 @@ def test_asic_set_asic_var_custom_keys(running_node):
     EditableSchema(project).insert("library", "testpdk", pdk)
     EditableSchema(pdk).insert("asic", "pdk", Parameter("str"))
 
-    class TestTask(ASICTaskSchema):
+    class TestTask(ASICTask):
         def tool(self):
             return "testtool"
     task = TestTask()
@@ -811,7 +809,7 @@ def test_asic_set_asic_var_skip_main_notdefined(running_node):
     EditableSchema(project).insert("library", "testpdk", pdk)
     EditableSchema(pdk).insert("asic", "pdk", Parameter("str"))
 
-    class TestTask(ASICTaskSchema):
+    class TestTask(ASICTask):
         def tool(self):
             return "testtool"
     task = TestTask()
@@ -838,7 +836,7 @@ def test_asic_set_asic_var_from_pdk_as_list(running_node):
     EditableSchema(project).insert("library", "testpdk", pdk)
     EditableSchema(pdk).insert("asic", "pdk", Parameter("str"))
 
-    class TestTask(ASICTaskSchema):
+    class TestTask(ASICTask):
         def tool(self):
             return "testtool"
     task = TestTask()
@@ -868,7 +866,7 @@ def test_asic_set_asic_var_from_pdk_as_list(running_node):
         ("sdc_with_nested.sdc", 1e-9, 10e-9),
     ])
 def test_get_clock_sdc(datadir, sdc_file, scale, period, running_project, running_node):
-    task = ASICTaskSchema()
+    task = ASICTask()
     EditableSchema(running_project).insert("tool", "dummy", "task", "asic", task)
 
     design = running_project.design
@@ -884,7 +882,7 @@ def test_get_clock_sdc(datadir, sdc_file, scale, period, running_project, runnin
 
 
 def test_get_clock_none(running_project, running_node):
-    task = ASICTaskSchema()
+    task = ASICTask()
     EditableSchema(running_project).insert("tool", "dummy", "task", "asic", task)
 
     with task.runtime(running_node) as runtool:

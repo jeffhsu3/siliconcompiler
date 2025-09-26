@@ -11,6 +11,7 @@ from siliconcompiler.package import RemoteResolver
 from siliconcompiler.utils import default_email_credentials_file
 from siliconcompiler.scheduler import SchedulerNode
 from siliconcompiler.utils.logging import SCBlankLoggerFormatter
+from siliconcompiler.utils.curation import collect
 
 
 def get_image(project, step, index):
@@ -22,7 +23,7 @@ def get_image(project, step, index):
     3. A default image name constructed as 'ghcr.io/siliconcompiler/sc_runner:v<version>'.
 
     Args:
-        project (Chip): The Chip object.
+        project (Project): The project object.
         step (str): The step name of the node.
         index (str): The index of the node.
 
@@ -51,7 +52,7 @@ def get_volumes_directories(project, cache_dir, workdir, step, index):
     (RW) and read-only (RO) sets.
 
     Args:
-        project (Chip): The Chip object.
+        project (Project): The project object.
         cache_dir (str): The path to the cache directory.
         workdir (str): The path to the node's working directory.
         step (str): The step name of the current node.
@@ -141,7 +142,7 @@ class DockerSchedulerNode(SchedulerNode):
         """Initializes a DockerSchedulerNode.
 
         Args:
-            chprojectip (Project): The parent Project object.
+            project (Project): The parent Project object.
             step (str): The step name in the flowgraph.
             index (str): The index for the step.
             replay (bool): If True, sets up the node to replay a previous run.
@@ -163,10 +164,10 @@ class DockerSchedulerNode(SchedulerNode):
         On Windows, this method forces all file/directory parameters to be
         copied rather than linked, which avoids issues with differing
         filesystem types between the host and the Linux-based container.
-        It then triggers `project.collect()` to ensure all files are staged.
+        It then triggers :meth:`.collect()` to ensure all files are staged.
 
         Args:
-            project (Chip): The Chip object to perform pre-processing on.
+            project (Project): The project object to perform pre-processing on.
         """
         if sys.platform == 'win32':
             # this avoids the issue of different file system types
@@ -177,7 +178,7 @@ class DockerSchedulerNode(SchedulerNode):
                 sc_type = project.get(*key, field='type')
                 if 'dir' in sc_type or 'file' in sc_type:
                     project.set(*key, True, field='copy')
-            project.collect()
+            collect(project)
 
     def run(self):
         """
@@ -204,7 +205,7 @@ class DockerSchedulerNode(SchedulerNode):
 
         is_windows = sys.platform == 'win32'
 
-        workdir = self.project.getworkdir()
+        workdir = self.jobworkdir
         start_cwd = os.getcwd()
 
         # Change working directory since the run may delete this folder
@@ -243,7 +244,7 @@ class DockerSchedulerNode(SchedulerNode):
             user = None
 
             volumes = [
-                f"{self.project.cwd}:{cwd}:rw",
+                f"{self.project_cwd}:{cwd}:rw",
                 f"{RemoteResolver.determine_cache_dir(self.project)}:{cache_dir}:rw"
             ]
             self.logger.debug(f'Volumes: {volumes}')
@@ -256,7 +257,7 @@ class DockerSchedulerNode(SchedulerNode):
                 volumes.append(f'{os.path.dirname(email_file)}:/sc_home/.sc:ro')
         else:
             cache_dir = RemoteResolver.determine_cache_dir(self.project)
-            cwd = self.project.cwd
+            cwd = self.project_cwd
             builddir = self.project.find_files('option', 'builddir')
 
             local_cfg = os.path.abspath('sc_docker.json')

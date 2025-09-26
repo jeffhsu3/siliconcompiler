@@ -5,11 +5,12 @@ import shutil
 
 from siliconcompiler import NodeStatus
 
-from siliconcompiler.tool import TaskSchema
+from siliconcompiler import Task
 from siliconcompiler import utils
+from siliconcompiler.tools import get_task
 
 
-class BuiltinTask(TaskSchema):
+class BuiltinTask(Task):
     def __init__(self):
         super().__init__()
 
@@ -57,7 +58,7 @@ class BuiltinTask(TaskSchema):
         flow.set("<step>", "<index>", "args", "errors==0")
         proj.set_flow(flow)
 
-        proj.get_task(filter=NOPTask).add_output_file("<top>.v", step="<in>", index="0")
+        get_task(proj, filter=NOPTask).add_output_file("<top>.v", step="<in>", index="0")
         node = SchedulerNode(proj, "<step>", "<index>")
         node.setup()
         return node.task

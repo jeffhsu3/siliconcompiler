@@ -8,6 +8,7 @@ from siliconcompiler import Project, Flowgraph, Design, NodeStatus
 from siliconcompiler.tools.builtin.nop import NOPTask
 
 from siliconcompiler.scheduler import SlurmSchedulerNode
+from siliconcompiler.utils.paths import jobdir
 
 
 @pytest.fixture
@@ -59,7 +60,7 @@ def test_get_configuration_directory(project):
     assert os.path.basename(SlurmSchedulerNode.get_configuration_directory(project)) == \
         "sc_configs"
     assert os.path.dirname(SlurmSchedulerNode.get_configuration_directory(project)) == \
-        project.getworkdir()
+        jobdir(project)
 
 
 def test_get_job_name():
@@ -83,7 +84,7 @@ def test_slurm_local_py(project):
     # Inserting value into configuration
     project.set('option', 'scheduler', 'name', 'slurm')
 
-    # Run the chip's build process synchronously.
+    # Run the project's build process synchronously.
     assert project.run()
 
     assert os.path.isfile('build/testdesign/job0/testdesign.pkg.json')

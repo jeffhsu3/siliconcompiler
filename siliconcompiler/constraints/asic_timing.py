@@ -28,7 +28,7 @@ class ASICTimingScenarioSchema(NamedSchema):
                 scope=Scope.GLOBAL,
                 shorthelp="Constraint: pin voltage level",
                 switch="-constraint_timing_voltage 'scenario pin <float>'",
-                example=["api: chip.set('constraint', 'timing', 'worst', 'voltage', 'VDD', '0.9')"],
+                example=["api: asic.set('constraint', 'timing', 'worst', 'voltage', 'VDD', '0.9')"],
                 help="""Operating voltage applied to a specific pin in the scenario."""))
 
         schema.insert(
@@ -40,7 +40,7 @@ class ASICTimingScenarioSchema(NamedSchema):
                 scope=Scope.GLOBAL,
                 shorthelp="Constraint: temperature",
                 switch="-constraint_timing_temperature 'scenario <float>'",
-                example=["api: chip.set('constraint', 'timing', 'worst', 'temperature', '125')"],
+                example=["api: asic.set('constraint', 'timing', 'worst', 'temperature', '125')"],
                 help="""Chip temperature applied to the scenario specified in degrees C."""))
 
         schema.insert(
@@ -51,7 +51,7 @@ class ASICTimingScenarioSchema(NamedSchema):
                 scope=Scope.GLOBAL,
                 shorthelp="Constraint: library corner",
                 switch="-constraint_timing_libcorner 'scenario <str>'",
-                example=["api: chip.set('constraint', 'timing', 'worst', 'libcorner', 'ttt')"],
+                example=["api: asic.set('constraint', 'timing', 'worst', 'libcorner', 'ttt')"],
                 help="""List of characterization corners used to select
                 timing files for all logiclibs and macrolibs."""))
 
@@ -63,7 +63,7 @@ class ASICTimingScenarioSchema(NamedSchema):
                 scope=Scope.GLOBAL,
                 shorthelp="Constraint: pex corner",
                 switch="-constraint_timing_pexcorner 'scenario <str>'",
-                example=["api: chip.set('constraint', 'timing', 'worst', 'pexcorner', 'max')"],
+                example=["api: asic.set('constraint', 'timing', 'worst', 'pexcorner', 'max')"],
                 help="""Parasitic corner applied to the scenario. The
                 'pexcorner' string must match a corner found in
                 :keypath:`PDK,pdk,pexmodelfileset`."""))
@@ -76,7 +76,7 @@ class ASICTimingScenarioSchema(NamedSchema):
                 scope=Scope.GLOBAL,
                 shorthelp="Constraint: operating condition",
                 switch="-constraint_timing_opcond 'scenario <str>'",
-                example=["api: chip.set('constraint', 'timing', 'worst', 'opcond', 'typical_1.0')"],
+                example=["api: asic.set('constraint', 'timing', 'worst', 'opcond', 'typical_1.0')"],
                 help="""Operating condition applied to the scenario. The value
                 can be used to access specific conditions within the library
                 timing models from the :keypath:`ASICProject,asic,asiclib` timing models."""))
@@ -89,7 +89,7 @@ class ASICTimingScenarioSchema(NamedSchema):
                 scope=Scope.GLOBAL,
                 shorthelp="Constraint: operating mode",
                 switch="-constraint_timing_mode 'scenario <str>'",
-                example=["api: chip.set('constraint', 'timing', 'worst', 'mode', 'test')"],
+                example=["api: asic.set('constraint', 'timing', 'worst', 'mode', 'test')"],
                 help="""Operating mode for the scenario. Operating mode strings
                 can be values such as test, functional, standby."""))
 
@@ -101,7 +101,7 @@ class ASICTimingScenarioSchema(NamedSchema):
                 scope=Scope.GLOBAL,
                 shorthelp="Constraint: SDC files",
                 switch="-constraint_timing_file 'scenario <file>'",
-                example=["api: chip.set('constraint', 'timing', 'worst', 'file', 'hello.sdc')"],
+                example=["api: asic.set('constraint', 'timing', 'worst', 'file', 'hello.sdc')"],
                 help="""List of timing constraint sets files to use for the scenario. The
                 values are combined with any constraints specified by the design
                 'constraint' parameter. If no constraints are found, a default
@@ -115,7 +115,7 @@ class ASICTimingScenarioSchema(NamedSchema):
                 scope=Scope.GLOBAL,
                 shorthelp="Constraint: timing checks",
                 switch="-constraint_timing_check 'scenario <str>'",
-                example=["api: chip.add('constraint', 'timing', 'worst', 'check', 'setup')"],
+                example=["api: asic.add('constraint', 'timing', 'worst', 'check', 'setup')"],
                 help="""
                 List of checks for to perform for the scenario. The checks must
                 align with the capabilities of the EDA tools and flow being used.
@@ -160,14 +160,14 @@ class ASICTimingScenarioSchema(NamedSchema):
         return self.get("voltage", pin, step=step, index=index)
 
     def add_libcorner(self,
-                      libcorner: str,
+                      libcorner: Union[List[str], str],
                       clobber: bool = False,
                       step: str = None, index: Union[str, int] = None):
         """
         Adds a library corner to the design.
 
         Args:
-            libcorner (str): The name of the library corner to add.
+            libcorner (Union[List[str], str]): One or more library corners to add.
             clobber (bool): If True, existing library corners at the specified step/index will
                     be overwritten.
                     If False (default), the library corner will be added.
@@ -352,14 +352,14 @@ class ASICTimingScenarioSchema(NamedSchema):
         return self.get("sdcfileset", step=step, index=index)
 
     def add_check(self,
-                  check: str,
+                  check: Union[List[str], str],
                   clobber: bool = False,
                   step: str = None, index: Union[str, int] = None):
         """
         Adds a check to the design process.
 
         Args:
-            check (str): The name of the check to add.
+            check (Union[List[str], str]): One or more checks to add.
             clobber (bool): If True, existing checks at the specified step/index will
                     be overwritten.
                     If False (default), the check will be added.
@@ -450,8 +450,8 @@ class ASICTimingConstraintSchema(BaseSchema):
         """
         if scenario is None:
             scenarios = {}
-            for scenario in self.getkeys():
-                scenarios[scenario] = self.get(scenario, field="schema")
+            for name in self.getkeys():
+                scenarios[name] = self.get(name, field="schema")
             return scenarios
 
         if not self.valid(scenario):

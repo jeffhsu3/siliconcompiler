@@ -9,12 +9,12 @@ Installation: https://github.com/The-OpenROAD-Project/OpenSTA (also installed wi
 '''
 
 
-from siliconcompiler.tool import TaskSchema
+from siliconcompiler import Task
 
 from siliconcompiler import FPGA
 
 
-class OpenSTATask(TaskSchema):
+class OpenSTATask(Task):
     def __init__(self):
         super().__init__()
 
@@ -59,7 +59,7 @@ class OpenSTATask(TaskSchema):
             design.set_topmodule("top")
         proj = ASICProject(design)
         proj.add_fileset("docs")
-        proj.load_target(freepdk45_demo.setup)
+        freepdk45_demo(proj)
         flow = Flowgraph("docsflow")
         flow.node("<step>", cls(), index="<index>")
         proj.set_flow(flow)

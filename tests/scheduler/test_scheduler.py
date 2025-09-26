@@ -12,6 +12,8 @@ from siliconcompiler.scheduler import Scheduler
 from siliconcompiler.schema import EditableSchema, Parameter
 
 from siliconcompiler.tools.builtin.nop import NOPTask
+from siliconcompiler.utils.paths import jobdir
+from siliconcompiler.tools import get_task
 
 
 @pytest.fixture
@@ -101,10 +103,10 @@ def test_check_display_run(basic_project):
 
 
 @patch('sys.platform', 'linux')
-def test_check_display_nodisplay(basic_project, remove_display_environment, caplog):
+def test_check_display_nodisplay(basic_project, remove_display_environment, monkeypatch, caplog):
     # Checks if the nodisplay option is set
     # On linux system without display
-    setattr(basic_project, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(basic_project, "_Project__logger", logging.getLogger())
     basic_project.logger.setLevel(logging.INFO)
 
     basic_project.set("option", "nodisplay", False)
@@ -192,7 +194,7 @@ def test_increment_job_name_default(basic_project):
 
     scheduler = Scheduler(basic_project)
 
-    os.makedirs(basic_project.getworkdir(), exist_ok=True)
+    os.makedirs(jobdir(basic_project), exist_ok=True)
 
     assert basic_project.get("option", "jobname") == "job0"
     assert scheduler._Scheduler__increment_job_name() is True
@@ -224,7 +226,7 @@ def test_increment_job_name(basic_project, prev_name, new_name):
     basic_project.set('option', 'jobname', prev_name)
     scheduler = Scheduler(basic_project)
 
-    os.makedirs(basic_project.getworkdir(), exist_ok=True)
+    os.makedirs(jobdir(basic_project), exist_ok=True)
 
     assert basic_project.get("option", "jobname") == prev_name
     assert scheduler._Scheduler__increment_job_name() is True
@@ -236,7 +238,7 @@ def test_clean_build_dir(basic_project):
 
     scheduler = Scheduler(basic_project)
 
-    os.makedirs(basic_project.getworkdir(), exist_ok=True)
+    os.makedirs(jobdir(basic_project), exist_ok=True)
 
     with patch("shutil.rmtree", autospec=True) as call:
         scheduler._Scheduler__clean_build_dir()
@@ -249,8 +251,8 @@ def test_clean_build_dir_with_from(basic_project):
 
     scheduler = Scheduler(basic_project)
 
-    os.makedirs(basic_project.getworkdir(), exist_ok=True)
-    assert os.path.isdir(basic_project.getworkdir())
+    os.makedirs(jobdir(basic_project), exist_ok=True)
+    assert os.path.isdir(jobdir(basic_project))
 
     with patch("shutil.rmtree", autospec=True) as call:
         scheduler._Scheduler__clean_build_dir()
@@ -262,7 +264,7 @@ def test_clean_build_dir_do_nothing(basic_project):
 
     scheduler = Scheduler(basic_project)
 
-    os.makedirs(basic_project.getworkdir(), exist_ok=True)
+    os.makedirs(jobdir(basic_project), exist_ok=True)
 
     with patch("shutil.rmtree", autospec=True) as call:
         scheduler._Scheduler__clean_build_dir()
@@ -275,7 +277,7 @@ def test_clean_build_dir_remote(basic_project):
 
     scheduler = Scheduler(basic_project)
 
-    os.makedirs(basic_project.getworkdir(), exist_ok=True)
+    os.makedirs(jobdir(basic_project), exist_ok=True)
 
     with patch("shutil.rmtree", autospec=True) as call:
         scheduler._Scheduler__clean_build_dir()
@@ -301,8 +303,8 @@ def test_check_manifest_fail(basic_project):
         call.assert_called_once()
 
 
-def test_check_flowgraph_io_basic(basic_project, caplog):
-    setattr(basic_project, "_Project__logger", logging.getLogger())
+def test_check_flowgraph_io_basic(basic_project, monkeypatch, caplog):
+    monkeypatch.setattr(basic_project, "_Project__logger", logging.getLogger())
     basic_project.logger.setLevel(logging.INFO)
 
     scheduler = Scheduler(basic_project)
@@ -311,19 +313,19 @@ def test_check_flowgraph_io_basic(basic_project, caplog):
     assert caplog.text == ""
 
 
-def test_check_flowgraph_io_with_files(basic_project_no_flow, caplog):
+def test_check_flowgraph_io_with_files(basic_project_no_flow, monkeypatch, caplog):
     flow = Flowgraph("testflow")
     flow.node("stepone", NOPTask())
     flow.node("steptwo", NOPTask())
     flow.edge("stepone", "steptwo")
     basic_project_no_flow.set_flow(flow)
 
-    setattr(basic_project_no_flow, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(basic_project_no_flow, "_Project__logger", logging.getLogger())
     basic_project_no_flow.logger.setLevel(logging.INFO)
 
     scheduler = Scheduler(basic_project_no_flow)
 
-    nop = basic_project_no_flow.get_task(filter=NOPTask)
+    nop = get_task(basic_project_no_flow, filter=NOPTask)
     nop.add_output_file("test.v", step="stepone", index="0")
     nop.add_input_file("test.v", step="steptwo", index="0")
 
@@ -331,7 +333,7 @@ def test_check_flowgraph_io_with_files(basic_project_no_flow, caplog):
     assert caplog.text == ""
 
 
-def test_check_flowgraph_io_with_files_join(basic_project_no_flow, caplog):
+def test_check_flowgraph_io_with_files_join(basic_project_no_flow, monkeypatch, caplog):
     flow = Flowgraph("testflow")
     flow.node("stepone", NOPTask())
     flow.node("steptwo", NOPTask())
@@ -342,12 +344,12 @@ def test_check_flowgraph_io_with_files_join(basic_project_no_flow, caplog):
     flow.edge("dojoin", "postjoin")
     basic_project_no_flow.set_flow(flow)
 
-    setattr(basic_project_no_flow, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(basic_project_no_flow, "_Project__logger", logging.getLogger())
     basic_project_no_flow.logger.setLevel(logging.INFO)
 
     scheduler = Scheduler(basic_project_no_flow)
 
-    nop = basic_project_no_flow.get_task(filter=NOPTask)
+    nop = get_task(basic_project_no_flow, filter=NOPTask)
     nop.add_output_file("a.v", step="stepone", index="0")
     nop.add_output_file("b.v", step="steptwo", index="0")
     nop.add_input_file("a.v", step="dojoin", index="0")
@@ -361,7 +363,7 @@ def test_check_flowgraph_io_with_files_join(basic_project_no_flow, caplog):
     assert caplog.text == ""
 
 
-def test_check_flowgraph_io_with_files_join_extra_files(basic_project_no_flow, caplog):
+def test_check_flowgraph_io_with_files_join_extra_files(basic_project_no_flow, monkeypatch, caplog):
     flow = Flowgraph("testflow")
     flow.node("stepone", NOPTask())
     flow.node("steptwo", NOPTask())
@@ -372,12 +374,12 @@ def test_check_flowgraph_io_with_files_join_extra_files(basic_project_no_flow, c
     flow.edge("dojoin", "postjoin")
     basic_project_no_flow.set_flow(flow)
 
-    setattr(basic_project_no_flow, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(basic_project_no_flow, "_Project__logger", logging.getLogger())
     basic_project_no_flow.logger.setLevel(logging.INFO)
 
     scheduler = Scheduler(basic_project_no_flow)
 
-    nop = basic_project_no_flow.get_task(filter=NOPTask)
+    nop = get_task(basic_project_no_flow, filter=NOPTask)
     nop.add_output_file("a.v", step="stepone", index="0")
     nop.add_output_file("common.v", step="stepone", index="0")
     nop.add_output_file("b.v", step="steptwo", index="0")
@@ -390,19 +392,19 @@ def test_check_flowgraph_io_with_files_join_extra_files(basic_project_no_flow, c
     assert caplog.text == ""
 
 
-def test_check_flowgraph_io_with_files_missing_input(basic_project_no_flow, caplog):
+def test_check_flowgraph_io_with_files_missing_input(basic_project_no_flow, monkeypatch, caplog):
     flow = Flowgraph("testflow")
     flow.node("stepone", NOPTask())
     flow.node("steptwo", NOPTask())
     flow.edge("stepone", "steptwo")
     basic_project_no_flow.set_flow(flow)
 
-    setattr(basic_project_no_flow, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(basic_project_no_flow, "_Project__logger", logging.getLogger())
     basic_project_no_flow.logger.setLevel(logging.INFO)
 
     scheduler = Scheduler(basic_project_no_flow)
 
-    nop = basic_project_no_flow.get_task(filter=NOPTask)
+    nop = get_task(basic_project_no_flow, filter=NOPTask)
     nop.add_output_file("test.v", step="stepone", index="0")
     nop.add_input_file("test.v", step="steptwo", index="0")
     nop.add_input_file("missing.v", step="steptwo", index="0")
@@ -411,7 +413,7 @@ def test_check_flowgraph_io_with_files_missing_input(basic_project_no_flow, capl
     assert "Invalid flow: steptwo/0 will not receive required input missing.v" in caplog.text
 
 
-def test_check_flowgraph_io_with_files_multple_input(basic_project_no_flow, caplog):
+def test_check_flowgraph_io_with_files_multple_input(basic_project_no_flow, monkeypatch, caplog):
     flow = Flowgraph("testflow")
     flow.node("stepone", NOPTask(), index=0)
     flow.node("stepone", NOPTask(), index=1)
@@ -420,12 +422,12 @@ def test_check_flowgraph_io_with_files_multple_input(basic_project_no_flow, capl
     flow.edge("stepone", "steptwo", tail_index=1)
     basic_project_no_flow.set_flow(flow)
 
-    setattr(basic_project_no_flow, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(basic_project_no_flow, "_Project__logger", logging.getLogger())
     basic_project_no_flow.logger.setLevel(logging.INFO)
 
     scheduler = Scheduler(basic_project_no_flow)
 
-    nop = basic_project_no_flow.get_task(filter=NOPTask)
+    nop = get_task(basic_project_no_flow, filter=NOPTask)
     nop.add_output_file("test.v", step="stepone", index="0")
     nop.add_output_file("test.v", step="stepone", index="1")
     nop.add_input_file("test.v", step="steptwo", index="0")

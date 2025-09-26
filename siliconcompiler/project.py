@@ -1,20 +1,14 @@
-import importlib
-import inspect
 import logging
 import os
-import shutil
 import sys
-import tarfile
 import uuid
 
 import os.path
 
-from inspect import getfullargspec
-from typing import Set, Union, List, Tuple, Type, Callable, TextIO
+from typing import Union, List, Tuple, TextIO
 
 from siliconcompiler.schema import BaseSchema, NamedSchema, EditableSchema, Parameter, Scope, \
     __version__ as schema_version
-from siliconcompiler.schema.parametervalue import NodeListValue, NodeSetValue
 from siliconcompiler.schema.utils import trim
 
 from siliconcompiler import Design
@@ -23,8 +17,8 @@ from siliconcompiler import Checklist
 
 from siliconcompiler.schema_support.record import RecordSchema
 from siliconcompiler.schema_support.metric import MetricSchema
-from siliconcompiler.tool import TaskSchema
-from siliconcompiler.tool import ShowTaskSchema, ScreenshotTaskSchema
+from siliconcompiler import Task
+from siliconcompiler import ShowTask, ScreenshotTask
 from siliconcompiler.schema_support.option import OptionSchema
 from siliconcompiler.library import LibrarySchema
 
@@ -33,12 +27,13 @@ from siliconcompiler.schema_support.dependencyschema import DependencySchema
 from siliconcompiler.schema_support.pathschema import PathSchemaBase
 
 from siliconcompiler.report.dashboard.cli import CliDashboard
-from siliconcompiler.scheduler import Scheduler, SchedulerNode
+from siliconcompiler.scheduler import Scheduler
 from siliconcompiler.utils.logging import SCColorLoggerFormatter, SCLoggerFormatter
-from siliconcompiler.utils import FilterDirectories, get_file_ext
+from siliconcompiler.utils import get_file_ext
 from siliconcompiler.utils.multiprocessing import MPManager
+from siliconcompiler.utils.paths import jobdir, workdir
 from siliconcompiler.flows.showflow import ShowFlow
-from siliconcompiler.flowgraph import RuntimeFlowgraph
+from siliconcompiler.tools import get_task
 
 
 class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
@@ -77,7 +72,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                 require=True,
                 shorthelp="Schema version number",
                 lock=True,
-                example=["api: chip.get('schemaversion')"],
+                example=["api: project.get('schemaversion')"],
                 schelp="""SiliconCompiler schema version number."""))
 
         # Runtime arg
@@ -89,7 +84,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                 shorthelp="ARG: step argument",
                 switch="-arg_step <str>",
                 example=["cli: -arg_step 'route'",
-                         "api: chip.set('arg', 'step', 'route')"],
+                         "api: project.set('arg', 'step', 'route')"],
                 schelp="""
                 Dynamic parameter passed in by the SC runtime as an argument to
                 a runtime task. The parameter enables configuration code
@@ -105,7 +100,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                 shorthelp="ARG: index argument",
                 switch="-arg_index <str>",
                 example=["cli: -arg_index 0",
-                         "api: chip.set('arg', 'index', '0')"],
+                         "api: project.set('arg', 'index', '0')"],
                 schelp="""
                 Dynamic parameter passed in by the SC runtime as an argument to
                 a runtime task. The parameter enables configuration code
@@ -114,11 +109,11 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                 is not intended for external use."""))
 
         schema.insert("checklist", "default", Checklist())
-        schema.insert("library", "default", Design())
+        schema.insert("library", BaseSchema())
         schema.insert("flowgraph", "default", Flowgraph())
         schema.insert("metric", MetricSchema())
         schema.insert("record", RecordSchema())
-        schema.insert("tool", "default", "task", "default", TaskSchema())
+        schema.insert("tool", "default", "task", "default", Task())
 
         # Add options
         schema.insert("option", OptionSchema())
@@ -150,7 +145,8 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                 "[(str,str,str,str)]",
                 scope=Scope.GLOBAL,
                 shorthelp="Option: Fileset alias mapping",
-                example=["api: project.set('option', 'alias', ('design', 'rtl', 'lambda', 'rtl')"],
+                example=[
+                    "api: project.set('option', 'alias', ('design', 'rtl', 'lambda', 'rtl'))"],
                 help=trim("""List of filesets to alias during a run. When an alias is specific
                     it will be used instead of the source fileset. It is useful when you
                     want to substitute a fileset from one library with a fileset from another,
@@ -276,16 +272,6 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
 
         return self.get("library", design_name, field="schema")
 
-    @property
-    def cwd(self) -> str:
-        """
-        Returns the working directory for the project.
-
-        Returns:
-            str: The absolute path of the current working directory.
-        """
-        return self.__cwd
-
     @classmethod
     def convert(cls, obj: "Project") -> "Project":
         """
@@ -383,62 +369,6 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
 
         return ret
 
-    def load_target(self, target: Union[str, Callable[["Project"], None]], **kwargs):
-        """
-        Loads and executes a target function or method within the project context.
-
-        This method allows dynamically loading a Python function (e.g., a target
-        defined in a separate module) and executing it. It performs type checking
-        to ensure the target function accepts a Project object as its first
-        required argument and that the current project instance is compatible
-        with the target's expected Project type.
-
-        Args:
-            target (Union[str, Callable[["Project"], None]]):
-                The target to load. This can be:
-                - A string in the format "module.submodule.function_name"
-                - A callable Python function that accepts a Project object as its
-                  first argument.
-            **kwargs: Arbitrary keyword arguments to pass to the target function.
-
-        Raises:
-            ValueError: If the target string path is incomplete, if the target
-                        signature does not meet the requirements (e.g., no
-                        required arguments, or more than one required argument).
-            TypeError: If the target does not take a Project object as its
-                       first argument, or if the current project instance is
-                       not compatible with the target's required Project type.
-        """
-        if isinstance(target, str):
-            if "." not in target:
-                raise ValueError("unable to process incomplete function path")
-
-            *module, func = target.split(".")
-            module = ".".join(module)
-
-            mod = importlib.import_module(module)
-            target = getattr(mod, func)
-
-        func_spec = getfullargspec(target)
-
-        args_len = len(func_spec.args or []) - len(func_spec.defaults or [])
-
-        if args_len == 0 and not func_spec.args:
-            raise ValueError('target signature cannot must take at least one argument')
-        if args_len > 1:
-            raise ValueError('target signature cannot have more than one required argument')
-
-        proj_arg = func_spec.args[0]
-        required_type = func_spec.annotations.get(proj_arg, Project)
-
-        if not issubclass(required_type, Project):
-            raise TypeError("target must take in a Project object")
-
-        if not isinstance(self, required_type):
-            raise TypeError(f"target requires a {required_type.__name__} project")
-
-        target(self, **kwargs)
-
     def add_dep(self, obj):
         """
         Adds a dependency object (e.g., a Design, Flowgraph, LibrarySchema,
@@ -463,12 +393,12 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             return
 
         if isinstance(obj, Design):
-            if not self.has_library(obj.name):
+            if not self._has_library(obj.name):
                 EditableSchema(self).insert("library", obj.name, obj)
         elif isinstance(obj, Flowgraph):
             self.__import_flow(obj)
         elif isinstance(obj, LibrarySchema):
-            if not self.has_library(obj.name):
+            if not self._has_library(obj.name):
                 EditableSchema(self).insert("library", obj.name, obj)
         elif isinstance(obj, Checklist):
             if obj.name not in self.getkeys("checklist"):
@@ -546,7 +476,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             error = True
         else:
             # Assert design is a library
-            if not self.has_library(design):
+            if not self._has_library(design):
                 self.logger.error(f"{design} has not been loaded")
                 error = True
 
@@ -587,7 +517,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                 error = True
                 continue
 
-            if not self.has_library(src_lib):
+            if not self._has_library(src_lib):
                 continue
 
             if not self.get("library", src_lib, field="schema").has_fileset(src_fileset):
@@ -598,7 +528,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             if not dst_lib:
                 continue
 
-            if not self.has_library(dst_lib):
+            if not self._has_library(dst_lib):
                 self.logger.error(f"{dst_lib} has not been loaded")
                 error = True
                 continue
@@ -620,7 +550,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         """
         # Automatically select fileset if only one is available in the design
         if not self.get("option", "fileset") and self.get("option", "design") and \
-                self.has_library(self.get("option", "design")):
+                self._has_library(self.get("option", "design")):
             filesets = self.design.getkeys("fileset")
             if len(filesets) == 1:
                 fileset = filesets[0]
@@ -701,221 +631,6 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             param = self.get(*key, field=None)
             if param.get(field="scope") != Scope.GLOBAL:
                 param.reset()
-
-    def _getbuilddir(self) -> str:
-        """
-        Returns the absolute path to the project's build directory.
-
-        This directory is the root for all intermediate and final compilation
-        artifacts.
-
-        Returns:
-            str: The absolute path to the build directory.
-        """
-        builddir = self.get('option', 'builddir')
-        if os.path.isabs(builddir):
-            return builddir
-
-        return os.path.join(self.cwd, builddir)
-
-    def getworkdir(self, step: str = None, index: Union[int, str] = None) -> str:
-        """
-        Returns the absolute path to the working directory for a given
-        step and index within the project's job structure.
-
-        The directory structure is typically:
-        `<build_dir>/<design_name>/<job_name>/<step>/<index>/`
-
-        If `step` and `index` are not provided, the job directory is returned.
-        If `step` is provided but `index` is not, index '0' is assumed.
-
-        Args:
-            step (str, optional): The name of the flowgraph step (e.g., 'syn', 'place').
-                                  Defaults to None.
-            index (Union[int, str], optional): The index of the task within the step.
-                                               Defaults to None (implies '0' if step is set).
-
-        Returns:
-            str: The absolute path to the specified working directory.
-
-        Raises:
-            ValueError: If the design name is not set in the project.
-        """
-        if not self.name:
-            raise ValueError("name has not been set")
-
-        dirlist = [self._getbuilddir(),
-                   self.name,
-                   self.get('option', 'jobname')]
-
-        if step is not None:
-            dirlist.append(step)
-
-            if index is None:
-                index = '0'
-
-            dirlist.append(str(index))
-        return os.path.join(*dirlist)
-
-    def getcollectiondir(self) -> str:
-        """
-        Returns the absolute path to the directory where collected files are stored.
-
-        This directory is typically located within the project's working directory
-        and is used to consolidate files marked for collection.
-
-        Returns:
-            str: The absolute path to the collected files directory.
-        """
-        return os.path.join(self.getworkdir(), "sc_collected_files")
-
-    def collect(self,
-                directory: str = None,
-                verbose: bool = True,
-                whitelist: List[str] = None):
-        '''
-        Collects files and directories specified in the schema and places
-        them in a collection directory. The function only copies items that have
-        the 'copy' field set to True in their schema definition.
-
-        Args:
-            directory (str, optional): The output directory for collected files.
-                Defaults to the path from :meth:`.getcollectiondir`.
-            verbose (bool): If True, logs information about each collected file/directory.
-                Defaults to True.
-            whitelist (List[str], optional): A list of absolute paths that are
-                allowed to be collected. If an item to be collected is not on this list,
-                a `RuntimeError` is raised. Defaults to None.
-
-        Raises:
-            RuntimeError: If a file or directory to be collected is not in the `whitelist`.
-            FileNotFoundError: If a specified file or directory cannot be found.
-        '''
-        if not directory:
-            directory = self.getcollectiondir()
-        directory = os.path.abspath(directory)
-
-        # Remove existing directory
-        if os.path.exists(directory):
-            shutil.rmtree(directory)
-        os.makedirs(directory)
-
-        if verbose:
-            self.logger.info(f'Collecting files to: {directory}')
-
-        dirs = {}
-        files = {}
-
-        for key in self.allkeys():
-            if key[0] == 'history':
-                # skip history
-                continue
-
-            # Skip runtime directories
-            if key == ('option', 'builddir'):
-                # skip builddir
-                continue
-            if key == ('option', 'cachedir'):
-                # skip cache
-                continue
-
-            if key[0] == 'tool' and key[2] == 'task' and key[4] in ('input',
-                                                                    'report',
-                                                                    'output'):
-                # skip flow files files from builds
-                continue
-
-            leaftype = self.get(*key, field='type')
-            is_dir = "dir" in leaftype
-            is_file = "file" in leaftype
-
-            if not is_dir and not is_file:
-                continue
-
-            if not self.get(*key, field='copy'):
-                continue
-
-            for values, step, index in self.get(*key, field=None).getvalues(return_values=False):
-                if not values.has_value:
-                    continue
-
-                if isinstance(values, (NodeSetValue, NodeListValue)):
-                    values = values.values
-                else:
-                    values = [values]
-
-                if is_dir:
-                    dirs[(key, step, index)] = values
-                else:
-                    files[(key, step, index)] = values
-
-        path_filter = FilterDirectories(self)
-        for key, step, index in sorted(dirs.keys()):
-            abs_paths = self.find_files(*key, step=step, index=index)
-
-            new_paths = set()
-
-            if not isinstance(abs_paths, (list, tuple, set)):
-                abs_paths = [abs_paths]
-
-            abs_paths = zip(abs_paths, dirs[(key, step, index)])
-            abs_paths = sorted(abs_paths, key=lambda p: p[0])
-
-            for abs_path, value in abs_paths:
-                if not abs_path:
-                    raise FileNotFoundError(f"{value.get()} could not be copied")
-
-                if abs_path.startswith(directory):
-                    # File already imported in directory
-                    continue
-
-                imported = False
-                for new_path in new_paths:
-                    if abs_path.startwith(new_path):
-                        imported = True
-                        break
-                if imported:
-                    continue
-
-                new_paths.add(abs_path)
-
-                import_path = os.path.join(directory, value.get_hashed_filename())
-                if os.path.exists(import_path):
-                    continue
-
-                if whitelist is not None and abs_path not in whitelist:
-                    raise RuntimeError(f'{abs_path} is not on the approved collection list.')
-
-                if verbose:
-                    self.logger.info(f"  Collecting directory: {abs_path}")
-                path_filter.abspath = abs_path
-                shutil.copytree(abs_path, import_path, ignore=path_filter.filter)
-                path_filter.abspath = None
-
-        for key, step, index in sorted(files.keys()):
-            abs_paths = self.find_files(*key, step=step, index=index)
-
-            if not isinstance(abs_paths, (list, tuple, set)):
-                abs_paths = [abs_paths]
-
-            abs_paths = zip(abs_paths, files[(key, step, index)])
-            abs_paths = sorted(abs_paths, key=lambda p: p[0])
-
-            for abs_path, value in abs_paths:
-                if not abs_path:
-                    raise FileNotFoundError(f"{value.get()} could not be copied")
-
-                if abs_path.startswith(directory):
-                    # File already imported in directory
-                    continue
-
-                import_path = os.path.join(directory, value.get_hashed_filename())
-                if os.path.exists(import_path):
-                    continue
-
-                if verbose:
-                    self.logger.info(f"  Collecting file: {abs_path}")
-                shutil.copy2(abs_path, import_path)
 
     def history(self, job: str) -> "Project":
         '''
@@ -1019,7 +734,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         alias = {}
         for src_lib, src_fileset, dst_lib, dst_fileset in self.get("option", "alias"):
             if dst_lib:
-                if not self.has_library(dst_lib):
+                if not self._has_library(dst_lib):
                     raise KeyError(f"{dst_lib} is not a loaded library")
                 dst_obj = self.get("library", dst_lib, field="schema")
             else:
@@ -1029,58 +744,6 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             alias[(src_lib, src_fileset)] = (dst_obj, dst_fileset)
 
         return self.design.get_fileset(self.get("option", "fileset"), alias=alias)
-
-    def get_task(self,
-                 tool: str = None,
-                 task: str = None,
-                 filter: Union[Type[TaskSchema], Callable[[TaskSchema], bool]] = None) -> \
-            Union[Set[TaskSchema], TaskSchema]:
-        """Retrieves tasks based on specified criteria.
-
-        This method allows you to fetch tasks by tool name, task name, or by applying a custom
-        filter. If a single task matches the criteria, that task object is returned directly.
-        If multiple tasks match, a set of :class:`TaskSchema` objects is returned.
-        If no criteria are provided, all available tasks are returned.
-
-        Args:
-            tool (str, optional): The name of the tool to filter tasks by. Defaults to None.
-            task (str, optional): The name of the task to filter by. Defaults to None.
-            filter (Union[Type[TaskSchema], Callable[[TaskSchema], bool]], optional):
-                A filter to apply to the tasks. This can be:
-                - A `Type[TaskSchema]`: Only tasks that are instances of this type will be returned.
-                - A `Callable[[TaskSchema], bool]`: A function that takes a `TaskSchema` object
-                and returns `True` if the task should be included, `False` otherwise.
-                Defaults to None.
-
-        Returns:
-            Union[Set[TaskSchema], TaskSchema]:
-                - If exactly one task matches the criteria, returns that single `TaskSchema` object.
-                - If multiple tasks match or no specific tool/task is provided (and thus all tasks
-                are considered), returns a `Set[TaskSchema]` containing the matching tasks.
-        """
-        all_tasks: Set[TaskSchema] = set()
-        for tool_name in self.getkeys("tool"):
-            for task_name in self.getkeys("tool", tool_name, "task"):
-                all_tasks.add(self.get("tool", tool_name, "task", task_name, field="schema"))
-
-        tasks = set()
-        for task_obj in all_tasks:
-            if tool and task_obj.tool() != tool:
-                continue
-            if task and task_obj.task() != task:
-                continue
-            if filter:
-                if inspect.isclass(filter):
-                    if not isinstance(task_obj, filter):
-                        continue
-                elif callable(filter):
-                    if not filter(task_obj):
-                        continue
-            tasks.add(task_obj)
-
-        if len(tasks) == 1:
-            return list(tasks)[0]
-        return tasks
 
     def set_design(self, design: Union[Design, str]):
         """
@@ -1201,7 +864,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         """
 
         if isinstance(src_dep, str):
-            if self.has_library(src_dep):
+            if self._has_library(src_dep):
                 src_dep = self.get("library", src_dep, field="schema")
             else:
                 src_dep_name = src_dep
@@ -1210,7 +873,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         if src_dep is not None:
             if isinstance(src_dep, Design):
                 src_dep_name = src_dep.name
-                if not self.has_library(src_dep_name):
+                if not self._has_library(src_dep_name):
                     self.add_dep(src_dep)
             else:
                 raise TypeError("source dep is not a valid type")
@@ -1230,7 +893,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                 alias_dep_name = None
                 alias_fileset = None
             else:
-                if not self.has_library(alias_dep):
+                if not self._has_library(alias_dep):
                     raise KeyError(f"{alias_dep} has not been loaded")
 
                 alias_dep = self.get("library", alias_dep, field="schema")
@@ -1238,7 +901,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         if alias_dep is not None:
             if isinstance(alias_dep, Design):
                 alias_dep_name = alias_dep.name
-                if not self.has_library(alias_dep_name):
+                if not self._has_library(alias_dep_name):
                     self.add_dep(alias_dep)
             else:
                 raise TypeError("alias dep is not a valid type")
@@ -1253,6 +916,9 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             return self.add("option", "alias", alias)
 
     def has_library(self, library: Union[str, NamedSchema]) -> bool:
+        return self._has_library(library)
+
+    def _has_library(self, library: Union[str, NamedSchema]) -> bool:
         """
         Checks if a library with the given name exists and is loaded in the project.
 
@@ -1283,9 +949,9 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
 
         alias = []
         for src, src_fs, dst, dst_fs in self.get("option", "alias"):
-            if not self.has_library(src):
+            if not self._has_library(src):
                 continue
-            if dst and not self.has_library(dst):
+            if dst and not self._has_library(dst):
                 continue
 
             aliased = f"{src} ({src_fs}) -> "
@@ -1306,7 +972,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             headers.append(("filesets", ", ".join(filesets)))
         if alias:
             headers.append(("alias", ", ".join(alias)))
-        headers.append(("jobdir", self.getworkdir()))
+        headers.append(("jobdir", jobdir(self)))
 
         return headers
 
@@ -1339,7 +1005,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             ValueError: If there is no history to summarize.
 
         Examples:
-            >>> chip.summary()
+            >>> project.summary()
             # Prints a summary of the last run to stdout.
         '''
         histories = self.getkeys("history")
@@ -1396,7 +1062,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
 
         Examples:
             >>> # Get path to gate-level Verilog from synthesis step
-            >>> vg_filepath = chip.find_result('vg', step='syn')
+            >>> vg_filepath = project.find_result('vg', step='syn')
         """
 
         if filename and step is None:
@@ -1405,7 +1071,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         if step is None:
             raise ValueError("step is required")
 
-        workdir = self.getworkdir(step, index)
+        workingdir = workdir(self, step, index)
 
         if not filename:
             fileset = self.get("option", "fileset")
@@ -1414,11 +1080,11 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             design_name = self.design.get_topmodule(fileset[0])
 
             checkfiles = [
-                os.path.join(workdir, directory, f'{design_name}.{filetype}'),
-                os.path.join(workdir, directory, f'{design_name}.{filetype}.gz')
+                os.path.join(workingdir, directory, f'{design_name}.{filetype}'),
+                os.path.join(workingdir, directory, f'{design_name}.{filetype}.gz')
             ]
         else:
-            checkfiles = [os.path.join(workdir, directory, filename)]
+            checkfiles = [os.path.join(workingdir, directory, filename)]
 
         for f in checkfiles:
             self.logger.debug(f"Finding node file: {f}")
@@ -1448,7 +1114,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
             ValueError: If there is no history to snapshot.
 
         Examples:
-            >>> chip.snapshot()
+            >>> project.snapshot()
             # Creates a snapshot image in the default location for the last run.
         '''
         from siliconcompiler.report import generate_summary_image, _open_summary_image
@@ -1467,7 +1133,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         history = self.history(jobname)
 
         if not path:
-            path = os.path.join(history.getworkdir(), f'{history.design.name}.png')
+            path = os.path.join(jobdir(history), f'{history.design.name}.png')
 
         if os.path.exists(path):
             os.remove(path)
@@ -1496,7 +1162,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
                                       the system attempts to find the most recent
                                       layout file. Defaults to None.
             screenshot (bool): If True, the operation is treated as a screenshot request,
-                               using `ScreenshotTaskSchema` instead of `ShowTaskSchema`.
+                               using `ScreenshotTask` instead of `ShowTask`.
                                Defaults to False.
             extension (str, optional): The specific file extension to search for when
                                        automatically finding a file (e.g., 'gds', 'lef').
@@ -1508,12 +1174,12 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
 
         Examples:
             >>> # Display a specific GDS file
-            >>> chip.show('build/my_design/job0/write_gds/0/outputs/my_design.gds')
+            >>> project.show('build/my_design/job0/write_gds/0/outputs/my_design.gds')
 
             >>> # Automatically find and show the last generated layout
-            >>> chip.show()
+            >>> project.show()
         '''
-        tool_cls = ScreenshotTaskSchema if screenshot else ShowTaskSchema
+        tool_cls = ScreenshotTask if screenshot else ShowTask
 
         sc_jobname = self.get("option", "jobname")
         sc_step, sc_index = None, None
@@ -1570,14 +1236,14 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         # Check that file exists
         if not os.path.exists(filepath):
             self.logger.error(f"Invalid filepath {filepath}.")
-            return
+            return None
 
         filetype = get_file_ext(filepath)
 
         task = tool_cls.get_task(filetype)
         if task is None:
             self.logger.error(f"Filetype '{filetype}' not available in the registered showtools.")
-            return False
+            return None
 
         # Create copy of project to avoid changing user project
         proj = self.copy()
@@ -1602,7 +1268,7 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         proj.set("option", "jobname", jobname)
 
         # Setup in task variables
-        task: ShowTaskSchema = proj.get_task(filter=task.__class__)
+        task: ShowTask = get_task(proj, filter=task.__class__)
         task.set_showfilepath(filename)
         task.set_showfiletype(filetype)
         task.set_shownode(jobname=sc_jobname, step=sc_step, index=sc_index)
@@ -1611,51 +1277,6 @@ class Project(PathSchemaBase, CommandLineSchema, BaseSchema):
         proj.run()
         if screenshot:
             return proj.find_result('png', step=task.task())
-
-    def archive(self, jobname: str = None, include: List[str] = None, archive_name: str = None):
-        '''Archive a job directory into a compressed tarball.
-
-        Creates a single compressed archive (.tgz) based on the specified job.
-        By default, only outputs, reports, log files, and the final manifest
-        are archived.
-
-        Args:
-            jobname (str, optional): The job to archive. By default, archives the job specified
-                in :keypath:`option,jobname`.
-            include (List[str], optional): Overrides default inclusion rules. Accepts a list of glob
-                patterns matched from the root of individual step/index directories.
-                To capture all files, supply `["*"]`.
-            archive_name (str, optional): The path to the output archive file. Defaults to
-                `<design>_<jobname>.tgz`.
-        '''
-        histories = self.getkeys("history")
-        if not histories:
-            raise ValueError("no history to archive")
-
-        if jobname is None:
-            jobname = self.get("option", "jobname")
-        if jobname not in histories:
-            org_job = jobname
-            jobname = histories[0]
-            self.logger.warning(f"{org_job} not found in history, picking {jobname}")
-
-        history = self.history(jobname)
-
-        flow = history.get('option', 'flow')
-        flowgraph_nodes = RuntimeFlowgraph(
-            history.get("flowgraph", flow, field='schema'),
-            from_steps=history.get('option', 'from'),
-            to_steps=history.get('option', 'to'),
-            prune_nodes=history.get('option', 'prune')).get_nodes()
-
-        if not archive_name:
-            archive_name = f"{history.name}_{jobname}.tgz"
-
-        self.logger.info(f'Creating archive {archive_name}...')
-
-        with tarfile.open(archive_name, "w:gz") as tar:
-            for step, index in flowgraph_nodes:
-                SchedulerNode(history, step, index).archive(tar, include, True)
 
 
 class SimProject(Project):

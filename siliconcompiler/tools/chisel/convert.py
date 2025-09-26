@@ -6,10 +6,10 @@ import os.path
 
 from siliconcompiler import sc_open
 
-from siliconcompiler.tool import TaskSchema
+from siliconcompiler import Task
 
 
-class ConvertTask(TaskSchema):
+class ConvertTask(Task):
     def __init__(self):
         super().__init__()
 
@@ -31,6 +31,8 @@ class ConvertTask(TaskSchema):
         for line in stdout.splitlines():
             line = line.strip()
             if 'sbt script version:' in line:
+                return line.split()[-1]
+            if 'sbt runner version:' in line:
                 return line.split()[-1]
 
         return None

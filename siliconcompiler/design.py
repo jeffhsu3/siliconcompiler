@@ -1,7 +1,7 @@
 import io
 import re
-
 import os.path
+from pathlib import Path
 
 from typing import List, Union, Tuple, Dict
 
@@ -18,7 +18,7 @@ from siliconcompiler.schema.utils import trim
 ###########################################################################
 class Design(LibrarySchema, DependencySchema):
     '''
-    Schema for a 'design', which is a chip object that can be compiled.
+    Schema for a 'design'.
 
     This class inherits from :class:`~siliconcompiler.LibrarySchema` and
     :class:`~siliconcompiler.DependencySchema`, and adds parameters and methods
@@ -112,7 +112,7 @@ class Design(LibrarySchema, DependencySchema):
         """Adds include directories to a fileset.
 
         Args:
-           value (str or Path): Include directory name.
+           value (Path or list[Path]): Include path(s).
            fileset (str, optional): Fileset name. If not provided, the active
             fileset is used.
            clobber (bool, optional): Clears existing list before adding item.
@@ -121,7 +121,8 @@ class Design(LibrarySchema, DependencySchema):
         Returns:
            list[str]: List of include directories
         """
-        return self.__set_add(fileset, 'idir', value, clobber, typelist=[str, list],
+        return self.__set_add(fileset, 'idir', value, clobber,
+                              typelist=[str, list, Path],
                               dataroot=dataroot)
 
     def get_idir(self, fileset: str = None) -> List[str]:
@@ -219,7 +220,7 @@ class Design(LibrarySchema, DependencySchema):
         """Adds dynamic library directories to a fileset.
 
         Args:
-           value (str or List[str]): Library directories.
+           value (Path or list[Path]): Library path(s).
            fileset (str, optional): Fileset name. If not provided, the active
             fileset is used.
            clobber (bool, optional): Clears existing list before adding item.
@@ -228,7 +229,8 @@ class Design(LibrarySchema, DependencySchema):
         Returns:
            list[str]: List of library directories.
         """
-        return self.__set_add(fileset, 'libdir', value, clobber, typelist=[str, list],
+        return self.__set_add(fileset, 'libdir', value, clobber,
+                              typelist=[str, list, Path],
                               dataroot=dataroot)
 
     def get_libdir(self, fileset: str = None) -> List[str]:
@@ -366,7 +368,7 @@ class Design(LibrarySchema, DependencySchema):
             if dep is not self:
                 self.add_dep(dep, clobber=True)
         else:
-            raise TypeError("dep is not a valid type")
+            raise TypeError(f"dep is not a valid type: {dep}")
 
         if not isinstance(dep, Design):
             raise ValueError(f"cannot associate fileset ({depfileset}) with {dep.name}")
@@ -408,7 +410,8 @@ class Design(LibrarySchema, DependencySchema):
     def __write_flist(self,
                       filename: str,
                       filesets: List[str],
-                      depalias: Dict[str, Tuple[NamedSchema, str]]):
+                      depalias: Dict[str, Tuple[NamedSchema, str]],
+                      comments: bool = False):
         '''
         Internal helper to write a Verilog-style file list (`.f` file).
 
@@ -420,6 +423,7 @@ class Design(LibrarySchema, DependencySchema):
             filename (str): The path to the output file list.
             filesets (List[str]): A list of fileset names to include.
             depalias (Dict): A dictionary for aliasing dependencies.
+            comments (bool, optional): Add comments in output file.
         '''
         written_cmd = set()
 
@@ -437,18 +441,21 @@ class Design(LibrarySchema, DependencySchema):
 
         for lib, fileset in self.get_fileset(filesets, depalias):
             if lib.get('fileset', fileset, 'idir'):
-                write_header(f"{lib.name} / {fileset} / include directories")
+                if (comments):
+                    write_header(f"{lib.name} / {fileset} / include directories")
                 for idir in lib.find_files('fileset', fileset, 'idir'):
                     write(f"+incdir+{idir}")
 
             if lib.get('fileset', fileset, 'define'):
-                write_header(f"{lib.name} / {fileset} / defines")
+                if (comments):
+                    write_header(f"{lib.name} / {fileset} / defines")
                 for define in lib.get('fileset', fileset, 'define'):
                     write(f"+define+{define}")
 
             for filetype in lib.getkeys('fileset', fileset, 'file'):
                 if lib.get('fileset', fileset, 'file', filetype):
-                    write_header(f"{lib.name} / {fileset} / {filetype} files")
+                    if (comments):
+                        write_header(f"{lib.name} / {fileset} / {filetype} files")
                     for file in lib.find_files('fileset', fileset, 'file', filetype):
                         write(file)
 
@@ -481,7 +488,8 @@ class Design(LibrarySchema, DependencySchema):
                       filename: str,
                       fileset: str = None,
                       fileformat: str = None,
-                      depalias: Dict[str, Tuple[NamedSchema, str]] = None) -> None:
+                      depalias: Dict[str, Tuple[NamedSchema, str]] = None,
+                      comments: bool = False) -> None:
         """Exports filesets to a standard formatted text file.
 
         Currently supports Verilog `flist` format only.
@@ -494,6 +502,7 @@ class Design(LibrarySchema, DependencySchema):
                 the active fileset is used.
             fileformat (str, optional): Export format.
             depalias (dict of schema objects): Map of aliased objects.
+            comments (bool, optional): Add comments in output file.
         """
 
         if filename is None:
@@ -514,7 +523,7 @@ class Design(LibrarySchema, DependencySchema):
             fileformat = self.__map_fileformat(filename)
 
         if fileformat == "flist":
-            self.__write_flist(filename, fileset, depalias)
+            self.__write_flist(filename, fileset, depalias, comments)
         else:
             raise ValueError(f"{fileformat} is not a supported filetype")
 
@@ -668,6 +677,9 @@ class Design(LibrarySchema, DependencySchema):
         if value is None:
             raise ValueError(f"None is an illegal {option} value")
 
+        # Handling string like objects (like Path)
+        value = [str(x) for x in value] if isinstance(value, list) else [str(value)]
+
         if dataroot is ...:
             dataroot = None
         else:
@@ -800,8 +812,8 @@ def schema_design(schema):
             scope=Scope.GLOBAL,
             shorthelp="Top module name",
             example=[
-                "api: chip.set('fileset', 'rtl', 'topmodule', 'mytop')",
-                "api: chip.set('fileset', 'testbench', 'topmodule', 'tb')"],
+                "api: design.set('fileset', 'rtl', 'topmodule', 'mytop')",
+                "api: design.set('fileset', 'testbench', 'topmodule', 'tb')"],
             help=trim("""
             Name of top module specified on a per fileset basis.""")))
 
@@ -812,8 +824,8 @@ def schema_design(schema):
             scope=Scope.GLOBAL,
             shorthelp="Include file search paths",
             example=[
-                "api: chip.set('fileset', 'rtl, 'idir', './rtl')",
-                "api: chip.set('fileset', 'testbench', 'idir', '/testbench')"],
+                "api: design.set('fileset', 'rtl', 'idir', './rtl')",
+                "api: design.set('fileset', 'testbench', 'idir', '/testbench')"],
             help=trim("""
             Include paths specify directories to scan for header files during
             compilation. If multiple paths are provided, they are searched
@@ -826,7 +838,7 @@ def schema_design(schema):
             scope=Scope.GLOBAL,
             shorthelp="Preprocessor macro definitions",
             example=[
-                "api: chip.set('fileset', 'rtl', 'define', 'CFG_TARGET=FPGA')"],
+                "api: design.set('fileset', 'rtl', 'define', 'CFG_TARGET=FPGA')"],
             help=trim("""
             Defines macros at compile time for design languages that support
             preprocessing, such as Verilog, C, and C++. The macro format is
@@ -839,7 +851,7 @@ def schema_design(schema):
             scope=Scope.GLOBAL,
             shorthelp="Preprocessor macro undefine",
             example=[
-                "api: chip.set('fileset', 'rtl', 'undefine', 'CFG_TARGET')"],
+                "api: design.set('fileset', 'rtl', 'undefine', 'CFG_TARGET')"],
             help=trim("""
             Undefines a macro that may have been previously defined via the
             compiler, options, or header files.""")))
@@ -851,7 +863,7 @@ def schema_design(schema):
             scope=Scope.GLOBAL,
             shorthelp="Library search paths",
             example=[
-                "api: chip.set('fileset', 'rtl, 'libdir', '/usr/lib')"],
+                "api: design.set('fileset', 'rtl', 'libdir', '/usr/lib')"],
             help=trim("""
             Specifies directories to scan for libraries provided with the
             :keypath:`Design,fileset,<fileset>,lib` parameter. If multiple paths are provided,
@@ -864,7 +876,7 @@ def schema_design(schema):
             scope=Scope.GLOBAL,
             shorthelp="Design libraries to include",
             example=[
-                "api: chip.set('fileset', 'rtl', 'lib', 'mylib')"],
+                "api: design.set('fileset', 'rtl', 'lib', 'mylib')"],
             help=trim("""
             Specifies libraries to use during compilation. The compiler searches for
             library in the compiler standard library paths and in the
@@ -878,7 +890,7 @@ def schema_design(schema):
             scope=Scope.GLOBAL,
             shorthelp="Design parameters",
             example=[
-                "api: chip.set('fileset', 'rtl, 'param', 'N', '64'"],
+                "api: design.set('fileset', 'rtl', 'param', 'N', '64'"],
             help=trim("""
             Sets a named parameter to a string value. The value is limited to basic
             data literals. The types of parameters and values supported is tightly
@@ -892,5 +904,5 @@ def schema_design(schema):
             scope=Scope.GLOBAL,
             shorthelp="Design dependency fileset",
             example=[
-                "api: chip.set('fileset', 'rtl, 'depfileset', ('lambdalib', 'rtl')"],
+                "api: design.set('fileset', 'rtl', 'depfileset', ('lambdalib', 'rtl')"],
             help=trim("""Sets the mapping for dependency filesets.""")))

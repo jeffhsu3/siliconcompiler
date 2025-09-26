@@ -11,17 +11,18 @@ from unittest.mock import patch
 
 from siliconcompiler import Project
 from siliconcompiler import Design, Flowgraph, Checklist
-from siliconcompiler.tool import TaskSchema, ToolSchema
+from siliconcompiler import Task
 from siliconcompiler.library import LibrarySchema
 
 from siliconcompiler.schema import NamedSchema, EditableSchema, Parameter, Scope
 
 from siliconcompiler.utils.logging import SCColorLoggerFormatter, SCLoggerFormatter
+from siliconcompiler.utils.paths import jobdir
 
 from siliconcompiler.project import SCColorLoggerFormatter as dut_sc_color_logger
 
 
-class FauxTask0(TaskSchema):
+class FauxTask0(Task):
     def tool(self):
         return "tool0"
 
@@ -29,7 +30,7 @@ class FauxTask0(TaskSchema):
         return "task0"
 
 
-class FauxTask1(TaskSchema):
+class FauxTask1(Task):
     def tool(self):
         return "tool1"
 
@@ -37,7 +38,7 @@ class FauxTask1(TaskSchema):
         return "task1"
 
 
-class FauxTask2(TaskSchema):
+class FauxTask2(Task):
     def tool(self):
         return "tool1"
 
@@ -61,7 +62,7 @@ def test_key_groups():
 
 
 def test_cwd():
-    assert Project().cwd == os.path.abspath(".")
+    assert Project()._Project__cwd == os.path.abspath(".")
 
 
 def test_init_logger(monkeypatch):
@@ -178,55 +179,6 @@ def test_pickling(monkeypatch):
     assert new_prj._logger_console in new_prj.logger.handlers
 
 
-def test_builddir():
-    assert Project()._getbuilddir() == os.path.abspath("build")
-
-
-def test_builddir_abspath():
-    project = Project()
-    project.set("option", "builddir", os.path.abspath("diffdir/buildhere"))
-
-    assert project._getbuilddir() == \
-        Path(os.path.abspath("diffdir/buildhere")).as_posix()
-
-
-def test_builddir_diff_build():
-    project = Project()
-    project.set("option", "builddir", "testbuild")
-    assert project._getbuilddir() == os.path.abspath("testbuild")
-
-
-def test_getworkdir_no_name():
-    with pytest.raises(ValueError, match="name has not been set"):
-        Project().getworkdir()
-
-
-def test_getworkdir():
-    assert Project("testname").getworkdir() == \
-        os.path.abspath(os.path.join("build", "testname", "job0"))
-
-
-def test_getworkdir_diff_jobname():
-    prj = Project("testname")
-    prj.set("option", "jobname", "thisjob")
-    assert prj.getworkdir() == os.path.abspath(os.path.join("build", "testname", "thisjob"))
-
-
-def test_getworkdir_step():
-    assert Project("testname").getworkdir(step="thisstep") == \
-        os.path.abspath(os.path.join("build", "testname", "job0", "thisstep", "0"))
-
-
-def test_getworkdir_step_index():
-    assert Project("testname").getworkdir(step="thisstep", index="thisindex") == \
-        os.path.abspath(os.path.join("build", "testname", "job0", "thisstep", "thisindex"))
-
-
-def test_getcollectiondir():
-    assert Project("testname").getcollectiondir() == \
-        os.path.abspath(os.path.join("build", "testname", "job0", "sc_collected_files"))
-
-
 def test_record_history():
     proj = Project("testname")
     assert proj.getkeys("history") == tuple()
@@ -247,9 +199,9 @@ def test_record_history_recursive_history():
     assert proj.get("history", "job1", field="schema").getkeys("history") == tuple()
 
 
-def test_record_history_warn(caplog):
+def test_record_history_warn(monkeypatch, caplog):
     proj = Project("testname")
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.WARNING)
     proj._record_history()
     proj._record_history()
@@ -511,9 +463,9 @@ def test_add_alias_src_name_not_loaded():
         dst.set_topmodule("top")
 
     proj = Project()
-    assert proj.has_library("test0") is False
+    assert proj._has_library("test0") is False
     proj.add_alias("test0", "rtl", dst, "rtl")
-    assert proj.has_library("test0") is False
+    assert proj._has_library("test0") is False
     assert proj.get("option", "alias") == [
         ("test0", "rtl", "dst", "rtl")
     ]
@@ -528,9 +480,9 @@ def test_add_alias_src_dep_not_loaded():
         dst.set_topmodule("top")
 
     proj = Project()
-    assert proj.has_library(design) is False
+    assert proj._has_library(design) is False
     proj.add_alias(design, "rtl", dst, "rtl")
-    assert proj.has_library(design) is True
+    assert proj._has_library(design) is True
     assert proj.get("option", "alias") == [
         ("test", "rtl", "dst", "rtl")
     ]
@@ -779,21 +731,21 @@ def test_get_filesets_with_alias_missing():
 
 def test_has_library_not_found():
     proj = Project()
-    assert proj.has_library("test") is False
+    assert proj._has_library("test") is False
 
     proj.add_dep(Design("test"))
-    assert proj.has_library("notfound") is False
-    assert proj.has_library("test") is True
+    assert proj._has_library("notfound") is False
+    assert proj._has_library("test") is True
 
 
 def test_has_library_not_found_with_object():
     proj = Project()
     design = Design("test")
-    assert proj.has_library(design) is False
+    assert proj._has_library(design) is False
 
     proj.add_dep(design)
-    assert proj.has_library("notfound") is False
-    assert proj.has_library(design) is True
+    assert proj._has_library("notfound") is False
+    assert proj._has_library(design) is True
 
 
 def test_summary_headers():
@@ -927,9 +879,9 @@ def test_summary_select_job_user():
         history.assert_called_once_with("thisjob")
 
 
-def test_summary_select_unknownjob(caplog):
+def test_summary_select_unknownjob(monkeypatch, caplog):
     proj = Project(Design("testdesign"))
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.WARNING)
 
     proj.set("option", "jobname", "thisjob")
@@ -944,441 +896,6 @@ def test_summary_select_unknownjob(caplog):
 
         history.assert_called_once_with("thatjob")  # will call with first alphabetical job
     assert "job0 not found in history, picking thatjob" in caplog.text
-
-
-def test_collect_file_verbose(caplog):
-    design = Design("testdesign")
-    with design.active_fileset("rtl"):
-        with design._active(copy=True):
-            design.add_file("top.v")
-    with open("top.v", "w") as f:
-        f.write("test")
-
-    proj = Project(design)
-    setattr(proj, "_Project__logger", logging.getLogger())
-    proj.logger.setLevel(logging.INFO)
-
-    proj.collect()
-
-    assert f"Collecting files to: {proj.getcollectiondir()}" in caplog.text
-    assert f"  Collecting file: {os.path.abspath('top.v')}" in caplog.text
-
-
-def test_collect_file_not_verbose(caplog):
-    design = Design("testdesign")
-    with design.active_fileset("rtl"):
-        with design._active(copy=True):
-            design.add_file("top.v")
-    with open("top.v", "w") as f:
-        f.write("test")
-
-    proj = Project(design)
-    setattr(proj, "_Project__logger", logging.getLogger())
-    proj.logger.setLevel(logging.INFO)
-
-    proj.collect(verbose=False)
-
-    assert caplog.text == ""
-
-
-def test_collect_file_update():
-    # Checks if collected files are properly updated after editing
-
-    # Create instance of design
-    design = Design("testdesign")
-    with design.active_fileset("rtl"):
-        with design._active(copy=True):
-            design.add_file("fake.v")
-
-    # Edit file
-    with open('fake.v', 'w') as f:
-        f.write('fake')
-
-    proj = Project(design)
-    proj.collect()
-
-    filename = design.get_file(fileset="rtl", filetype="verilog")[0]
-
-    assert len(os.listdir(proj.getcollectiondir())) == 1
-    with open(os.path.join(proj.getcollectiondir(), os.path.basename(filename)), 'r') as f:
-        assert f.readline() == 'fake'
-
-    # Edit file
-    with open('fake.v', 'w') as f:
-        f.write('newfake')
-
-    # Rerun collect
-    proj.collect()
-    assert len(os.listdir(proj.getcollectiondir())) == 1
-    with open(os.path.join(proj.getcollectiondir(), os.path.basename(filename)), 'r') as f:
-        assert f.readline() == 'newfake'
-
-
-def test_collect_directory():
-    # Create instance of design
-    design = Design("testdesign")
-    with design.active_fileset("rtl"):
-        with design._active(copy=True):
-            design.add_idir("testingdir")
-            design.add_file("testingdir/test.v")
-
-    os.makedirs('testingdir', exist_ok=True)
-
-    with open('testingdir/test.v', 'w') as f:
-        f.write('test')
-
-    proj = Project(design)
-    proj.collect()
-
-    assert len(os.listdir(proj.getcollectiondir())) == 1
-
-    path = design.get_idir(fileset="rtl")[0]
-    assert path.startswith(proj.getcollectiondir())
-    assert os.listdir(path) == ['test.v']
-    assert design.get_file(fileset="rtl",
-                           filetype="verilog")[0].startswith(proj.getcollectiondir())
-
-
-def test_collect_subdirectory():
-    # Create instance of design
-    design = Design("testdesign")
-    with design.active_fileset("rtl"):
-        with design._active(copy=True):
-            design.add_idir("testingdir")
-            design.add_file("testingdir/subdir/test.v")
-
-    os.makedirs('testingdir/subdir', exist_ok=True)
-
-    with open('testingdir/subdir/test.v', 'w') as f:
-        f.write('test')
-
-    proj = Project(design)
-    proj.collect()
-
-    assert len(os.listdir(proj.getcollectiondir())) == 1
-
-    path = design.get_idir(fileset="rtl")[0]
-    assert path.startswith(proj.getcollectiondir())
-    assert os.listdir(path) == ['subdir']
-    assert os.listdir(os.path.join(path, "subdir")) == ['test.v']
-    assert design.get_file(fileset="rtl",
-                           filetype="verilog")[0].startswith(proj.getcollectiondir())
-
-
-def test_collect_file_with_false():
-    # Create instance of design
-    design = Design("testdesign")
-    with design.active_fileset("rtl"):
-        with design._active(copy=False):
-            design.add_file("fake.v")
-
-    # Edit file
-    with open('fake.v', 'w') as f:
-        f.write('fake')
-
-    proj = Project(design)
-    proj.collect()
-
-    # No files should have been collected
-    assert len(os.listdir(proj.getcollectiondir())) == 0
-
-
-def test_collect_file_home(monkeypatch):
-    def _mock_home():
-        return Path(os.getcwd()) / "home"
-
-    monkeypatch.setattr(Path, 'home', _mock_home)
-
-    _mock_home().mkdir(exist_ok=True)
-
-    # Create instance of design
-    design = Design("testdesign")
-    with design.active_fileset("rtl"):
-        with design._active(copy=True):
-            design.add_idir(str(Path.home()))
-
-    with open(Path.home() / "test.v", "w") as f:
-        f.write("test")
-
-    proj = Project(design)
-    proj.collect()
-
-    # No files should have been collected
-    assert len(os.listdir(proj.getcollectiondir())) == 1
-    subdir = os.path.join(proj.getcollectiondir(), os.listdir(proj.getcollectiondir())[0])
-    assert len(os.listdir(subdir)) == 0
-
-
-def test_collect_file_build():
-    os.makedirs('build', exist_ok=True)
-
-    # Create instance of design
-    design = Design("testdesign")
-    with design.active_fileset("rtl"):
-        with design._active(copy=True):
-            design.add_idir("build")
-
-    with open("build/test.v", "w") as f:
-        f.write("test")
-
-    proj = Project(design)
-    proj.collect()
-
-    # No files should have been collected
-    assert len(os.listdir(proj.getcollectiondir())) == 1
-    subdir = os.path.join(proj.getcollectiondir(), os.listdir(proj.getcollectiondir())[0])
-    assert len(os.listdir(subdir)) == 0
-
-
-def test_collect_file_hidden_dir():
-    os.makedirs('test/.test', exist_ok=True)
-
-    # Create instance of design
-    design = Design("testdesign")
-    with design.active_fileset("rtl"):
-        with design._active(copy=True):
-            design.add_idir("test")
-
-    with open("test/.test/test.v", "w") as f:
-        f.write("test")
-
-    proj = Project(design)
-    proj.collect()
-
-    # No files should have been collected
-    assert len(os.listdir(proj.getcollectiondir())) == 1
-    subdir = os.path.join(proj.getcollectiondir(), os.listdir(proj.getcollectiondir())[0])
-    assert len(os.listdir(subdir)) == 0
-
-
-def test_collect_file_hidden_file():
-    os.makedirs('test', exist_ok=True)
-
-    # Create instance of design
-    design = Design("testdesign")
-    with design.active_fileset("rtl"):
-        with design._active(copy=True):
-            design.add_idir("test")
-
-    with open("test/.test.v", "w") as f:
-        f.write("test")
-
-    proj = Project(design)
-    proj.collect()
-
-    # No files should have been collected
-    assert len(os.listdir(proj.getcollectiondir())) == 1
-    subdir = os.path.join(proj.getcollectiondir(), os.listdir(proj.getcollectiondir())[0])
-    assert len(os.listdir(subdir)) == 0
-
-
-def test_collect_file_whitelist_error():
-    os.makedirs('test/testing', exist_ok=True)
-
-    # Create instance of design
-    design = Design("testdesign")
-    with design.active_fileset("rtl"):
-        with design._active(copy=True):
-            design.add_idir("test")
-
-    with open('test/test', 'w') as f:
-        f.write('test')
-
-    proj = Project(design)
-
-    with pytest.raises(RuntimeError, match=".* is not on the approved collection list"):
-        proj.collect(whitelist=[os.path.abspath('not_test_folder')])
-
-    assert len(os.listdir(proj.getcollectiondir())) == 0
-
-
-def test_collect_file_whitelist_pass():
-    os.makedirs('test/testing', exist_ok=True)
-
-    # Create instance of design
-    design = Design("testdesign")
-    with design.active_fileset("rtl"):
-        with design._active(copy=True):
-            design.add_idir("test")
-
-    with open('test/test', 'w') as f:
-        f.write('test')
-
-    proj = Project(design)
-    proj.collect(whitelist=[os.path.abspath('test')])
-
-    assert len(os.listdir(proj.getcollectiondir())) == 1
-
-
-def test_get_task():
-    class FauxTask(TaskSchema):
-        def tool(self):
-            return "faux"
-
-    class FauxTask0(FauxTask):
-        def task(self):
-            return "task0"
-
-    class FauxTask1(FauxTask):
-        def task(self):
-            return "task1"
-
-    class FauxTask2(TaskSchema):
-        def tool(self):
-            return "anotherfaux"
-
-        def task(self):
-            return "task1"
-
-    faux0 = FauxTask0()
-    faux1 = FauxTask1()
-    faux2 = FauxTask2()
-
-    proj = Project()
-    EditableSchema(proj).insert("tool", "faux", ToolSchema())
-    EditableSchema(proj).insert("tool", "faux", "task", "task0", faux0)
-    EditableSchema(proj).insert("tool", "faux", "task", "task1", faux1)
-    EditableSchema(proj).insert("tool", "anotherfaux", ToolSchema())
-    EditableSchema(proj).insert("tool", "anotherfaux", "task", "task1", faux2)
-
-    assert proj.get_task() == set([faux0, faux1, faux2])
-    assert proj.get_task(tool="faux") == set([faux0, faux1])
-    assert proj.get_task(task="task1") == set([faux1, faux2])
-    assert proj.get_task(tool="faux", task="task1") is faux1
-    assert proj.get_task(filter=lambda t: isinstance(t, FauxTask)) == set([faux0, faux1])
-    assert proj.get_task(filter=lambda t: isinstance(t, FauxTask2)) is faux2
-    assert proj.get_task(filter=FauxTask2) is faux2
-
-
-def test_get_task_missing():
-    assert Project().get_task("tool0", "task0") == set()
-
-
-def test_get_task_empty():
-    assert Project().get_task() == set()
-
-
-def test_load_target():
-    class Target:
-        calls = 0
-
-        @staticmethod
-        def target(target: Project):
-            Target.calls += 1
-
-    proj = Project()
-
-    assert Target.calls == 0
-    proj.load_target(Target.target)
-    assert Target.calls == 1
-
-
-def test_load_target_invalid_signature_type():
-    def target(target: str):
-        pass
-
-    proj = Project()
-
-    with pytest.raises(TypeError, match="target must take in a Project object"):
-        proj.load_target(target)
-
-
-def test_load_target_invalid_signature_required_args():
-    def target():
-        pass
-
-    proj = Project()
-
-    with pytest.raises(ValueError,
-                       match="target signature cannot must take at least one argument"):
-        proj.load_target(target)
-
-
-def test_load_target_invalid_signature_toomany_required_args():
-    def target(arg0, arg1):
-        pass
-
-    proj = Project()
-
-    with pytest.raises(ValueError,
-                       match="target signature cannot have more than one required argument"):
-        proj.load_target(target)
-
-
-def test_load_target_invalid_project():
-    class Proj0(Project):
-        pass
-
-    class Proj1(Project):
-        pass
-
-    def target(arg0: Proj1):
-        pass
-
-    proj = Proj0()
-
-    with pytest.raises(TypeError, match="target requires a Proj1 project"):
-        proj.load_target(target)
-
-
-def test_load_target_with_kwargs():
-    proj = Project()
-
-    class Target:
-        calls = 0
-
-        @staticmethod
-        def target(target: Project, arg0: str = "", arg1: int = 1):
-            Target.calls += 1
-            assert target is proj
-            assert arg0 == "test"
-            assert arg1 == 2
-
-    assert Target.calls == 0
-    proj.load_target(Target.target, arg0="test", arg1=2)
-    assert Target.calls == 1
-
-
-def test_load_target_with_kwargs_incomplete():
-    proj = Project()
-
-    class Target:
-        calls = 0
-
-        @staticmethod
-        def target(target: Project, arg0: str = "", arg1: int = 1):
-            Target.calls += 1
-            assert target is proj
-            assert arg0 == "test"
-            assert arg1 == 1
-
-    assert Target.calls == 0
-    proj.load_target(Target.target, arg0="test")
-    assert Target.calls == 1
-
-
-def test_load_target_string():
-    class Target:
-        calls = 0
-
-        @staticmethod
-        def target(proj):
-            Target.calls += 1
-
-    proj = Project()
-
-    with patch("importlib.import_module") as import_mod:
-        import_mod.return_value = Target
-        assert Target.calls == 0
-        proj.load_target("Target.target")
-        import_mod.assert_called_once_with("Target")
-        assert Target.calls == 1
-
-
-def test_load_target_string_invalid():
-    proj = Project()
-    with pytest.raises(ValueError, match="unable to process incomplete function path"):
-        proj.load_target("Target")
 
 
 def test_getdict_type():
@@ -1445,44 +962,44 @@ def test_find_result():
     proj = Project(design)
     proj.add_fileset("rtl")
 
-    with patch("siliconcompiler.Project.getworkdir") as getworkdir:
-        getworkdir.return_value = os.path.abspath(".")
+    with patch("siliconcompiler.project.workdir") as workdir:
+        workdir.return_value = os.path.abspath(".")
         assert proj.find_result("vg", "thisstep") == os.path.abspath("outputs/top.vg")
-        getworkdir.assert_called_once_with("thisstep", "0")
+        workdir.assert_called_once_with(proj, "thisstep", "0")
 
-    with patch("siliconcompiler.Project.getworkdir") as getworkdir:
-        getworkdir.return_value = os.path.abspath(".")
+    with patch("siliconcompiler.project.workdir") as workdir:
+        workdir.return_value = os.path.abspath(".")
         assert proj.find_result("not", "thisstep") is None
-        getworkdir.assert_called_once_with("thisstep", "0")
+        workdir.assert_called_once_with(proj, "thisstep", "0")
 
-    with patch("siliconcompiler.Project.getworkdir") as getworkdir:
-        getworkdir.return_value = os.path.abspath(".")
+    with patch("siliconcompiler.project.workdir") as workdir:
+        workdir.return_value = os.path.abspath(".")
         assert proj.find_result("vg", "thisstep", index="5") == os.path.abspath("outputs/top.vg")
-        getworkdir.assert_called_once_with("thisstep", "5")
+        workdir.assert_called_once_with(proj, "thisstep", "5")
 
-    with patch("siliconcompiler.Project.getworkdir") as getworkdir:
-        getworkdir.return_value = os.path.abspath(".")
+    with patch("siliconcompiler.project.workdir") as workdir:
+        workdir.return_value = os.path.abspath(".")
         assert proj.find_result("def", "thisstep") == os.path.abspath("outputs/top.def.gz")
-        getworkdir.assert_called_once_with("thisstep", "0")
+        workdir.assert_called_once_with(proj, "thisstep", "0")
 
-    with patch("siliconcompiler.Project.getworkdir") as getworkdir:
-        getworkdir.return_value = os.path.abspath(".")
+    with patch("siliconcompiler.project.workdir") as workdir:
+        workdir.return_value = os.path.abspath(".")
         assert proj.find_result("rpt", "thisstep", directory="reports") == \
             os.path.abspath("reports/top.rpt")
-        getworkdir.assert_called_once_with("thisstep", "0")
+        workdir.assert_called_once_with(proj, "thisstep", "0")
 
-    with patch("siliconcompiler.Project.getworkdir") as getworkdir:
-        getworkdir.return_value = os.path.abspath(".")
+    with patch("siliconcompiler.project.workdir") as workdir:
+        workdir.return_value = os.path.abspath(".")
         assert proj.find_result("rpt", "thisstep", directory="reports",
                                 filename="report_this.rpt") \
             == os.path.abspath("reports/report_this.rpt")
-        getworkdir.assert_called_once_with("thisstep", "0")
+        workdir.assert_called_once_with(proj, "thisstep", "0")
 
-    with patch("siliconcompiler.Project.getworkdir") as getworkdir:
-        getworkdir.return_value = os.path.abspath(".")
+    with patch("siliconcompiler.project.workdir") as workdir:
+        workdir.return_value = os.path.abspath(".")
         assert proj.find_result("thisstep", filename="other.def") == \
             os.path.abspath("outputs/other.def")
-        getworkdir.assert_called_once_with("thisstep", "0")
+        workdir.assert_called_once_with(proj, "thisstep", "0")
 
 
 def test_snapshot_info():
@@ -1493,12 +1010,12 @@ def test_snapshot_info():
     ]
 
 
-def test_snapshot(caplog):
+def test_snapshot(monkeypatch, caplog):
     image = Image.new('RGB', (1024, 1024))
     image.save("test.png")
 
     proj = Project(Design("testdesign"))
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
     proj.set("option", "design", "testdesign")
     proj._record_history()
@@ -1536,18 +1053,18 @@ def test_snapshot_select_job():
         history.assert_called_once_with("thatjob")
 
 
-def test_snapshot_default_path(caplog):
+def test_snapshot_default_path(monkeypatch, caplog):
     image = Image.new('RGB', (1024, 1024))
     image.save("test.png")
 
     proj = Project(Design("testdesign"))
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
     proj.set("option", "design", "testdesign")
     proj._record_history()
 
-    os.makedirs(proj.getworkdir(), exist_ok=True)
-    path = os.path.join(proj.getworkdir(), "testdesign.png")
+    os.makedirs(jobdir(proj), exist_ok=True)
+    path = os.path.join(jobdir(proj), "testdesign.png")
 
     assert not os.path.isfile(path)
 
@@ -1563,12 +1080,12 @@ def test_snapshot_default_path(caplog):
     assert "Generated summary image at " in caplog.text
 
 
-def test_snapshot_display_false(caplog):
+def test_snapshot_display_false(monkeypatch, caplog):
     image = Image.new('RGB', (1024, 1024))
     image.save("test.png")
 
     proj = Project(Design("testdesign"))
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
     proj.set("option", "design", "testdesign")
     proj._record_history()
@@ -1587,12 +1104,12 @@ def test_snapshot_display_false(caplog):
     assert "Generated summary image at " in caplog.text
 
 
-def test_snapshot_nodisplay(caplog):
+def test_snapshot_nodisplay(monkeypatch, caplog):
     image = Image.new('RGB', (1024, 1024))
     image.save("test.png")
 
     proj = Project(Design("testdesign"))
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
     proj.set("option", "design", "testdesign")
     proj.set("option", "nodisplay", True)
@@ -1612,9 +1129,9 @@ def test_snapshot_nodisplay(caplog):
     assert "Generated summary image at " in caplog.text
 
 
-def test_check_manifest_empty(caplog):
+def test_check_manifest_empty(monkeypatch, caplog):
     proj = Project()
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     assert proj.check_manifest() is False
@@ -1623,9 +1140,9 @@ def test_check_manifest_empty(caplog):
     assert "[option,flow] has not been set" in caplog.text
 
 
-def test_check_manifest_empty_with_design(caplog):
+def test_check_manifest_empty_with_design(monkeypatch, caplog):
     proj = Project(Design("testdesign"))
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     assert proj.check_manifest() is False
@@ -1634,10 +1151,10 @@ def test_check_manifest_empty_with_design(caplog):
     assert "[option,flow] has not been set" in caplog.text
 
 
-def test_check_manifest_design_set_not_loaded(caplog):
+def test_check_manifest_design_set_not_loaded(monkeypatch, caplog):
     proj = Project()
     proj.set("option", "design", "testdesign")
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     assert proj.check_manifest() is False
@@ -1646,11 +1163,11 @@ def test_check_manifest_design_set_not_loaded(caplog):
     assert "[option,flow] has not been set" in caplog.text
 
 
-def test_check_manifest_with_missing_fileset(caplog):
+def test_check_manifest_with_missing_fileset(monkeypatch, caplog):
     design = Design("testdesign")
     proj = Project(design)
     proj.set("option", "fileset", "rtl")
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     assert proj.check_manifest() is False
@@ -1658,13 +1175,13 @@ def test_check_manifest_with_missing_fileset(caplog):
     assert "[option,flow] has not been set" in caplog.text
 
 
-def test_check_manifest_with_missing_topmodule(caplog):
+def test_check_manifest_with_missing_topmodule(monkeypatch, caplog):
     design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.add_file("top.v")
     proj = Project(design)
     proj.set("option", "fileset", "rtl")
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     assert proj.check_manifest() is False
@@ -1672,7 +1189,7 @@ def test_check_manifest_with_missing_topmodule(caplog):
     assert "[option,flow] has not been set" in caplog.text
 
 
-def test_check_manifest_with_missing_flow(caplog):
+def test_check_manifest_with_missing_flow(monkeypatch, caplog):
     design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
@@ -1680,14 +1197,14 @@ def test_check_manifest_with_missing_flow(caplog):
     proj = Project(design)
     proj.set("option", "fileset", "rtl")
     proj.set("option", "flow", "testflow")
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     assert proj.check_manifest() is False
     assert "testflow has not been loaded" in caplog.text
 
 
-def test_check_manifest_pass(caplog):
+def test_check_manifest_pass(monkeypatch, caplog):
     design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
@@ -1696,14 +1213,14 @@ def test_check_manifest_pass(caplog):
     proj = Project(design)
     proj.set("option", "fileset", "rtl")
     proj.set_flow(flow)
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     assert proj.check_manifest() is True
     assert caplog.text == ""
 
 
-def test_check_manifest_with_alias_missing_src(caplog):
+def test_check_manifest_with_alias_missing_src(monkeypatch, caplog):
     design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
@@ -1715,14 +1232,14 @@ def test_check_manifest_with_alias_missing_src(caplog):
 
     proj.set("option", "alias", ("nothere", "rtl", None, None))
 
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     assert proj.check_manifest() is True
     assert caplog.text == ""
 
 
-def test_check_manifest_with_alias_empty_src(caplog):
+def test_check_manifest_with_alias_empty_src(monkeypatch, caplog):
     design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
@@ -1734,14 +1251,14 @@ def test_check_manifest_with_alias_empty_src(caplog):
 
     proj.set("option", "alias", (None, "rtl", None, None))
 
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     assert proj.check_manifest() is False
     assert "source library in [option,alias] must be set" in caplog.text
 
 
-def test_check_manifest_with_alias_missing_src_fileset(caplog):
+def test_check_manifest_with_alias_missing_src_fileset(monkeypatch, caplog):
     design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
@@ -1753,14 +1270,14 @@ def test_check_manifest_with_alias_missing_src_fileset(caplog):
 
     proj.set("option", "alias", ("testdesign", "rtl2", None, None))
 
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     assert proj.check_manifest() is False
     assert "rtl2 is not a valid fileset in testdesign" in caplog.text
 
 
-def test_check_manifest_with_alias_missing_dst(caplog):
+def test_check_manifest_with_alias_missing_dst(monkeypatch, caplog):
     design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
@@ -1772,14 +1289,14 @@ def test_check_manifest_with_alias_missing_dst(caplog):
 
     proj.set("option", "alias", ("testdesign", "rtl", None, None))
 
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     assert proj.check_manifest() is True
     assert caplog.text == ""
 
 
-def test_check_manifest_with_alias_empty_dst_fileset(caplog):
+def test_check_manifest_with_alias_empty_dst_fileset(monkeypatch, caplog):
     design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
@@ -1791,14 +1308,14 @@ def test_check_manifest_with_alias_empty_dst_fileset(caplog):
 
     proj.set("option", "alias", ("testdesign", "rtl", "testdesign", None))
 
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     assert proj.check_manifest() is True
     assert caplog.text == ""
 
 
-def test_check_manifest_with_alias_missing_dst_lib(caplog):
+def test_check_manifest_with_alias_missing_dst_lib(monkeypatch, caplog):
     design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
@@ -1810,14 +1327,14 @@ def test_check_manifest_with_alias_missing_dst_lib(caplog):
 
     proj.set("option", "alias", ("testdesign", "rtl", "testdesign1", None))
 
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     assert proj.check_manifest() is False
     assert " testdesign1 has not been loaded" in caplog.text
 
 
-def test_check_manifest_with_alias_missing_dst_fileset(caplog):
+def test_check_manifest_with_alias_missing_dst_fileset(monkeypatch, caplog):
     design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
@@ -1829,14 +1346,14 @@ def test_check_manifest_with_alias_missing_dst_fileset(caplog):
 
     proj.set("option", "alias", ("testdesign", "rtl", "testdesign", "rtl2"))
 
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     assert proj.check_manifest() is False
     assert "rtl2 is not a valid fileset in testdesign" in caplog.text
 
 
-def test_init_run(caplog):
+def test_init_run(monkeypatch, caplog):
     design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
@@ -1844,7 +1361,7 @@ def test_init_run(caplog):
 
     proj = Project(design)
 
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     assert proj.get("option", "fileset") == []
@@ -1854,7 +1371,7 @@ def test_init_run(caplog):
     assert "Setting design fileset to: rtl" in caplog.text
 
 
-def test_init_run_disable_dashboard_breakpoint(caplog):
+def test_init_run_disable_dashboard_breakpoint(monkeypatch, caplog):
     design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
@@ -1866,9 +1383,9 @@ def test_init_run_disable_dashboard_breakpoint(caplog):
     flow.node("faux", FauxTask0())
     proj.set_flow(flow)
 
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
-    setattr(proj, "__Project_dashboard", True)
+    assert proj._Project__dashboard is not None
 
     proj.set("option", "breakpoint", True, step="faux")
 
@@ -1882,7 +1399,7 @@ def test_init_run_disable_dashboard_breakpoint(caplog):
     assert "Disabling dashboard due to breakpoints at: faux/0" in caplog.text
 
 
-def test_init_run_disable_dashboard_no_breakpoint():
+def test_init_run_disable_dashboard_no_breakpoint(monkeypatch):
     design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
@@ -1894,7 +1411,7 @@ def test_init_run_disable_dashboard_no_breakpoint():
     flow.node("faux", FauxTask0())
     proj.set_flow(flow)
 
-    setattr(proj, "__Project_dashboard", True)
+    assert proj._Project__dashboard is not None
 
     with patch("siliconcompiler.report.dashboard.cli.CliDashboard.is_running") as is_running:
         is_running.return_value = True
@@ -1902,7 +1419,7 @@ def test_init_run_disable_dashboard_no_breakpoint():
         is_running.assert_not_called()
 
 
-def test_init_run_do_nothing(caplog):
+def test_init_run_do_nothing(monkeypatch, caplog):
     design = Design("testdesign")
     with design.active_fileset("rtl"):
         design.set_topmodule("top")
@@ -1913,7 +1430,7 @@ def test_init_run_do_nothing(caplog):
 
     proj = Project(design)
 
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     assert proj.get("option", "fileset") == []
@@ -1923,10 +1440,10 @@ def test_init_run_do_nothing(caplog):
     assert caplog.text == ""
 
 
-def test_init_run_no_design(caplog):
+def test_init_run_no_design(monkeypatch, caplog):
     proj = Project()
 
-    setattr(proj, "_Project__logger", logging.getLogger())
+    monkeypatch.setattr(proj, "_Project__logger", logging.getLogger())
     proj.logger.setLevel(logging.INFO)
 
     assert proj.get("option", "fileset") == []
@@ -1934,73 +1451,6 @@ def test_init_run_no_design(caplog):
     assert proj.get("option", "fileset") == []
 
     assert caplog.text == ""
-
-
-def test_archive_no_jobs():
-    with pytest.raises(ValueError, match="no history to archive"):
-        Project().archive()
-
-
-def test_archive_select_job():
-    proj = Project(Design("testdesign"))
-    proj.set("option", "jobname", "thisjob")
-    proj._record_history()
-    proj.set("option", "jobname", "thatjob")
-    proj._record_history()
-
-    with patch("siliconcompiler.Project.history") as history:
-        history.return_value = proj
-        proj.archive()
-
-        history.assert_called_once_with("thatjob")
-
-
-def test_archive_default_archive(caplog):
-    proj = Project(Design("testdesign"))
-    setattr(proj, "_Project__logger", logging.getLogger())
-    proj.logger.setLevel(logging.INFO)
-    proj._record_history()
-
-    proj.archive()
-
-    assert "Creating archive testdesign_job0.tgz..." in caplog.text
-    assert os.path.isfile("testdesign_job0.tgz")
-
-
-def test_archive_archive_name(caplog):
-    proj = Project(Design("testdesign"))
-    setattr(proj, "_Project__logger", logging.getLogger())
-    proj.logger.setLevel(logging.INFO)
-    proj._record_history()
-
-    proj.archive(archive_name="test.tar.gz")
-
-    assert "Creating archive test.tar.gz..." in caplog.text
-    assert os.path.isfile("test.tar.gz")
-
-
-def test_archive(caplog):
-    design = Design("testdesign")
-    design.set_topmodule("top", fileset="test")
-    proj = Project(design)
-    proj.add_fileset("test")
-    setattr(proj, "_Project__logger", logging.getLogger())
-    proj.logger.setLevel(logging.INFO)
-
-    flow = Flowgraph("testflow")
-    flow.node("stepone", FauxTask0())
-    flow.node("steptwo", FauxTask0())
-    flow.edge("stepone", "steptwo")
-    proj.set_flow(flow)
-
-    proj._record_history()
-
-    with patch("siliconcompiler.scheduler.SchedulerNode.archive") as archive:
-        proj.archive()
-        assert archive.call_count == 2
-
-    assert "Creating archive testdesign_job0.tgz..." in caplog.text
-    assert os.path.isfile("testdesign_job0.tgz")
 
 
 def test_run():

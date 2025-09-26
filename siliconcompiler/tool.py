@@ -40,6 +40,7 @@ from siliconcompiler.schema.utils import trim
 
 from siliconcompiler import utils, NodeStatus, Flowgraph
 from siliconcompiler import sc_open
+from siliconcompiler.utils import paths
 
 from siliconcompiler.schema_support.pathschema import PathSchema
 from siliconcompiler.schema_support.record import RecordTool, RecordSchema
@@ -87,7 +88,7 @@ class TaskSkip(TaskError):
         return self.__why
 
 
-class TaskSchema(NamedSchema, PathSchema, DocsSchema):
+class Task(NamedSchema, PathSchema, DocsSchema):
     """
     A schema class that defines the parameters and methods for a single task
     in a compilation flow.
@@ -123,7 +124,7 @@ class TaskSchema(NamedSchema, PathSchema, DocsSchema):
     @classmethod
     def _getdict_type(cls) -> str:
         """Returns the metadata for getdict."""
-        return TaskSchema.__name__
+        return Task.__name__
 
     def _from_dict(self, manifest, keypath, version=None):
         """
@@ -419,7 +420,7 @@ class TaskSchema(NamedSchema, PathSchema, DocsSchema):
             split_specs = [s.strip() for s in spec_set.split(",") if s.strip()]
             specs_list = []
             for spec in split_specs:
-                match = re.match(TaskSchema.__parse_version_check, spec)
+                match = re.match(Task.__parse_version_check, spec)
                 if match is None:
                     self.__logger.warning(f'Invalid version specifier {spec}. '
                                           f'Defaulting to =={spec}.')
@@ -1054,7 +1055,7 @@ class TaskSchema(NamedSchema, PathSchema, DocsSchema):
         """Custom state for pickling, removing runtime info."""
         state = self.__dict__.copy()
         for key in list(state.keys()):
-            if key.startswith("_TaskSchema__"):
+            if key.startswith("_Task__"):
                 del state[key]
         return state
 
@@ -1727,19 +1728,19 @@ class TaskSchema(NamedSchema, PathSchema, DocsSchema):
                                   step=step, index=index)
 
     def _find_files_search_paths(self, keypath, step, index):
-        paths = super()._find_files_search_paths(keypath, step, index)
+        search_paths = super()._find_files_search_paths(keypath, step, index)
         if keypath == "script":
-            paths.extend(self.find_files("refdir", step=step, index=index))
+            search_paths.extend(self.find_files("refdir", step=step, index=index))
         elif keypath == "input":
-            paths.append(os.path.join(self._parent(root=True).getworkdir(step=step, index=index),
-                                      "inputs"))
+            search_paths.append(os.path.join(
+                paths.workdir(self._parent(root=True), step=step, index=index), "inputs"))
         elif keypath == "report":
-            paths.append(os.path.join(self._parent(root=True).getworkdir(step=step, index=index),
-                                      "report"))
+            search_paths.append(os.path.join(
+                paths.workdir(self._parent(root=True), step=step, index=index), "report"))
         elif keypath == "output":
-            paths.append(os.path.join(self._parent(root=True).getworkdir(step=step, index=index),
-                                      "outputs"))
-        return paths
+            search_paths.append(os.path.join(
+                paths.workdir(self._parent(root=True), step=step, index=index), "outputs"))
+        return search_paths
 
     def _generate_doc(self, doc,
                       ref_root: str = "",
@@ -1896,9 +1897,9 @@ class TaskSchema(NamedSchema, PathSchema, DocsSchema):
         pass
 
 
-class ShowTaskSchema(TaskSchema):
+class ShowTask(Task):
     """
-    A specialized TaskSchema for tasks that display files (e.g., in a GUI viewer).
+    A specialized Task for tasks that display files (e.g., in a GUI viewer).
 
     This class provides a framework for dynamically finding and configuring
     viewer applications based on file types. It includes parameters for
@@ -1910,7 +1911,7 @@ class ShowTaskSchema(TaskSchema):
     __TASKS = {}
 
     def __init__(self):
-        """Initializes a ShowTaskSchema, adding specific parameters for show tasks."""
+        """Initializes a ShowTask, adding specific parameters for show tasks."""
         super().__init__()
         self.add_parameter("showfilepath", "file", "path to show")
         self.add_parameter("showfiletype", "str", "filetype to show")
@@ -1923,16 +1924,16 @@ class ShowTaskSchema(TaskSchema):
         """
         Private helper to validate if a task is a valid ShowTask or ScreenshotTask.
         """
-        if cls is not ShowTaskSchema and cls is not ScreenshotTaskSchema:
-            raise TypeError("class must be ShowTaskSchema or ScreenshotTaskSchema")
+        if cls is not ShowTask and cls is not ScreenshotTask:
+            raise TypeError("class must be ShowTask or ScreenshotTask")
 
         if task is None:
             return
 
-        if cls is ShowTaskSchema:
-            check, task_filter = ShowTaskSchema, ScreenshotTaskSchema
+        if cls is ShowTask:
+            check, task_filter = ShowTask, ScreenshotTask
         else:
-            check, task_filter = ScreenshotTaskSchema, None
+            check, task_filter = ScreenshotTask, None
 
         if not issubclass(task, check):
             return False
@@ -1988,8 +1989,8 @@ class ShowTaskSchema(TaskSchema):
         if not classes:
             return
 
-        with ShowTaskSchema.__TASKS_LOCK:
-            ShowTaskSchema.__TASKS.setdefault(cls, set()).update(classes)
+        with ShowTask.__TASKS_LOCK:
+            ShowTask.__TASKS.setdefault(cls, set()).update(classes)
 
     @classmethod
     def get_task(cls, ext):
@@ -2000,18 +2001,18 @@ class ShowTaskSchema(TaskSchema):
             ext (str): The file extension to find a viewer for.
 
         Returns:
-            An instance of a compatible ShowTaskSchema subclass, or None if
+            An instance of a compatible ShowTask subclass, or None if
             no suitable task is found.
         """
         cls.__check_task(None)
 
-        if cls not in ShowTaskSchema.__TASKS:
+        if cls not in ShowTask.__TASKS:
             cls.__populate_tasks()
 
-        with ShowTaskSchema.__TASKS_LOCK:
-            if cls not in ShowTaskSchema.__TASKS:
+        with ShowTask.__TASKS_LOCK:
+            if cls not in ShowTask.__TASKS:
                 return None
-            tasks = ShowTaskSchema.__TASKS[cls].copy()
+            tasks = ShowTask.__TASKS[cls].copy()
 
         # TODO: add user preference lookup (ext -> task)
 
@@ -2111,11 +2112,11 @@ class ShowTaskSchema(TaskSchema):
         return vars
 
 
-class ScreenshotTaskSchema(ShowTaskSchema):
+class ScreenshotTask(ShowTask):
     """
-    A specialized TaskSchema for tasks that generate screenshots of files.
+    A specialized Task for tasks that generate screenshots of files.
 
-    This class inherits from `ShowTaskSchema` and is specifically for tasks
+    This class inherits from `ShowTask` and is specifically for tasks
     that need to open a file, generate an image, and then exit. It automatically
     sets the 'showexit' parameter to True.
     """
@@ -2152,7 +2153,7 @@ class ToolSchema(NamedSchema):
         self.set_name(name)
         schema_tool(self)
         schema = EditableSchema(self)
-        schema.insert("task", "default", TaskSchema())
+        schema.insert("task", "default", Task())
 
     @classmethod
     def _getdict_type(cls) -> str:
@@ -2181,7 +2182,7 @@ def schema_tool(schema):
             shorthelp="Tool: executable name",
             switch="-tool_exe 'tool <str>'",
             example=["cli: -tool_exe 'openroad openroad'",
-                     "api: chip.set('tool', 'openroad', 'exe', 'openroad')"],
+                     "api: task.set('tool', 'openroad', 'exe', 'openroad')"],
             help=trim("""Tool executable name.""")))
 
     schema.insert(
@@ -2194,7 +2195,7 @@ def schema_tool(schema):
             switch="-tool_sbom 'tool version <file>'",
             example=[
                 "cli: -tool_sbom 'yosys 1.0.1 ys_sbom.json'",
-                "api: chip.set('tool', 'yosys', 'sbom', '1.0', 'ys_sbom.json')"],
+                "api: task.set('tool', 'yosys', 'sbom', '1.0', 'ys_sbom.json')"],
             help=trim("""
             Paths to software bill of material (SBOM) document file of the tool
             specified on a per version basis. The SBOM includes critical
@@ -2212,7 +2213,7 @@ def schema_tool(schema):
             switch="-tool_path 'tool <dir>'",
             example=[
                 "cli: -tool_path 'openroad /usr/local/bin'",
-                "api: chip.set('tool', 'openroad', 'path', '/usr/local/bin')"],
+                "api: task.set('tool', 'openroad', 'path', '/usr/local/bin')"],
             help=trim("""
             File system path to tool executable. The path is prepended to the
             system PATH environment variable for batch and interactive runs. The
@@ -2228,7 +2229,7 @@ def schema_tool(schema):
             shorthelp="Tool: executable version switch",
             switch="-tool_vswitch 'tool <str>'",
             example=["cli: -tool_vswitch 'openroad -version'",
-                     "api: chip.set('tool', 'openroad', 'vswitch', '-version')"],
+                     "api: task.set('tool', 'openroad', 'vswitch', '-version')"],
             help=trim("""
             Command line switch to use with executable used to print out
             the version number. Common switches include ``-v``, ``-version``,
@@ -2242,7 +2243,7 @@ def schema_tool(schema):
             shorthelp="Tool: vendor",
             switch="-tool_vendor 'tool <str>'",
             example=["cli: -tool_vendor 'yosys yosys'",
-                     "api: chip.set('tool', 'yosys', 'vendor', 'yosys')"],
+                     "api: task.set('tool', 'yosys', 'vendor', 'yosys')"],
             help=trim("""
             Name of the tool vendor. Parameter can be used to set vendor
             specific technology variables in the PDK and libraries. For
@@ -2258,7 +2259,7 @@ def schema_tool(schema):
             shorthelp="Tool: version",
             switch="-tool_version 'tool <str>'",
             example=["cli: -tool_version 'openroad >=v2.0'",
-                     "api: chip.set('tool', 'openroad', 'version', '>=v2.0')"],
+                     "api: task.set('tool', 'openroad', 'version', '>=v2.0')"],
             help=trim("""
             List of acceptable versions of the tool executable to be used. Each
             entry in this list must be a version specifier as described by Python
@@ -2280,7 +2281,7 @@ def schema_tool(schema):
             shorthelp="Tool: file format",
             switch="-tool_format 'tool <str>'",
             example=["cli: -tool_format 'yosys tcl'",
-                     "api: chip.set('tool', 'yosys', 'format', 'tcl')"],
+                     "api: task.set('tool', 'yosys', 'format', 'tcl')"],
             help=trim("""
             File format for tool manifest handoff.""")))
 
@@ -2294,7 +2295,7 @@ def schema_tool(schema):
             switch="-tool_licenseserver 'name key <str>'",
             example=[
                 "cli: -tool_licenseserver 'atask ACME_LICENSE 1700@server'",
-                "api: chip.set('tool', 'acme', 'licenseserver', 'ACME_LICENSE', '1700@server')"],
+                "api: task.set('tool', 'acme', 'licenseserver', 'ACME_LICENSE', '1700@server')"],
             help=trim("""
             Defines a set of tool specific environment variables used by the executable
             that depend on license key servers to control access. For multiple servers,
@@ -2322,7 +2323,7 @@ def schema_task(schema):
             switch="-tool_task_warningoff 'tool task <str>'",
             example=[
                 "cli: -tool_task_warningoff 'verilator lint COMBDLY'",
-                "api: chip.set('tool', 'verilator', 'task', 'lint', 'warningoff', 'COMBDLY')"],
+                "api: task.set('tool', 'verilator', 'task', 'lint', 'warningoff', 'COMBDLY')"],
             help=trim("""
             A list of tool warnings for which printing should be suppressed.
             Generally this is done on a per design basis after review has
@@ -2340,7 +2341,7 @@ def schema_task(schema):
             switch="-tool_task_regex 'tool task suffix <str>'",
             example=[
                 "cli: -tool_task_regex 'openroad place errors \"'-v ERROR'\"'",
-                "api: chip.set('tool', 'openroad', 'task', 'place', 'regex', 'errors', "
+                "api: task.set('tool', 'openroad', 'task', 'place', 'regex', 'errors', "
                 "'-v ERROR')"],
             help=trim("""
             A list of piped together grep commands. Each entry represents a set
@@ -2359,7 +2360,7 @@ def schema_task(schema):
 
             SiliconCompiler::
 
-                chip.set('task', 'openroad', 'regex', 'place', '0', 'warnings',
+                task.set('task', 'openroad', 'regex', 'place', '0', 'warnings',
                          ["WARNING", "-v bbox"])
 
             The "errors" and "warnings" suffixes are special cases. When set,
@@ -2379,7 +2380,7 @@ def schema_task(schema):
             switch="-tool_task_option 'tool task <str>'",
             example=[
                 "cli: -tool_task_option 'openroad cts -no_init'",
-                "api: chip.set('tool', 'openroad', 'task', 'cts', 'option', '-no_init')"],
+                "api: task.set('tool', 'openroad', 'task', 'cts', 'option', '-no_init')"],
             help=trim("""
             List of command line options for the task executable, specified on
             a per task and per step basis. Options must not include spaces.
@@ -2396,7 +2397,7 @@ def schema_task(schema):
             switch="-tool_task_var 'tool task key <str>'",
             example=[
                 "cli: -tool_task_var 'openroad cts myvar 42'",
-                "api: chip.set('tool', 'openroad', 'task', 'cts', 'var', 'myvar', '42')"],
+                "api: task.set('tool', 'openroad', 'task', 'cts', 'var', 'myvar', '42')"],
             help=trim("""
             Task script variables specified as key value pairs. Variable
             names and value types must match the name and type of task and reference
@@ -2412,7 +2413,7 @@ def schema_task(schema):
             switch="-tool_task_env 'tool task env <str>'",
             example=[
                 "cli: -tool_task_env 'openroad cts MYVAR 42'",
-                "api: chip.set('tool', 'openroad', 'task', 'cts', 'env', 'MYVAR', '42')"],
+                "api: task.set('tool', 'openroad', 'task', 'cts', 'env', 'MYVAR', '42')"],
             help=trim("""
             Environment variables to set for individual tasks. Keys and values
             should be set in accordance with the task's documentation. Most
@@ -2428,7 +2429,7 @@ def schema_task(schema):
             switch="-tool_task_file 'tool task key <file>'",
             example=[
                 "cli: -tool_task_file 'openroad floorplan macroplace macroplace.tcl'",
-                "api: chip.set('tool', 'openroad', 'task', 'floorplan', 'file', 'macroplace', "
+                "api: task.set('tool', 'openroad', 'task', 'floorplan', 'file', 'macroplace', "
                 "'macroplace.tcl')"],
             help=trim("""
             Paths to user supplied files mapped to keys. Keys and filetypes must
@@ -2447,7 +2448,7 @@ def schema_task(schema):
             switch="-tool_task_dir 'tool task key <dir>'",
             example=[
                 "cli: -tool_task_dir 'verilator compile cincludes include'",
-                "api: chip.set('tool', 'verilator', 'task', 'compile', 'dir', 'cincludes', "
+                "api: task.set('tool', 'verilator', 'task', 'compile', 'dir', 'cincludes', "
                 "'include')"],
             help=trim("""
             Paths to user supplied directories mapped to keys. Keys must match
@@ -2466,7 +2467,7 @@ def schema_task(schema):
             switch="-tool_task_input 'tool task <file>'",
             example=[
                 "cli: -tool_task_input 'openroad place \"place 0 oh_add.def\"'",
-                "api: chip.set('tool', 'openroad', 'task', 'place', 'input', 'oh_add.def', "
+                "api: task.set('tool', 'openroad', 'task', 'place', 'input', 'oh_add.def', "
                 "step='place', index='0')"],
             help=trim("""
             List of data files to be copied from previous flowgraph steps 'output'
@@ -2485,7 +2486,7 @@ def schema_task(schema):
             switch="-tool_task_output 'tool task <file>'",
             example=[
                 "cli: -tool_task_output 'openroad place \"place 0 oh_add.def\"'",
-                "api: chip.set('tool', 'openroad', 'task', 'place', 'output', 'oh_add.def', "
+                "api: task.set('tool', 'openroad', 'task', 'place', 'output', 'oh_add.def', "
                 "step='place', index='0')"],
             help=trim("""
             List of data files written to the 'output' directory of the
@@ -2503,7 +2504,7 @@ def schema_task(schema):
             shorthelp="Task: destination for stdout",
             switch="-tool_task_stdout_destination 'tool task <str>'",
             example=["cli: -tool_task_stdout_destination 'ghdl import log'",
-                     "api: chip.set('tool', 'ghdl', 'task', 'import', 'stdout', 'destination', "
+                     "api: task.set('tool', 'ghdl', 'task', 'import', 'stdout', 'destination', "
                      "'log')"],
             help=trim("""
             Defines where to direct the output generated over stdout.
@@ -2523,7 +2524,7 @@ def schema_task(schema):
             shorthelp="Task: file suffix for redirected stdout",
             switch="-tool_task_stdout_suffix 'tool task <str>'",
             example=["cli: -tool_task_stdout_suffix 'ghdl import log'",
-                     "api: chip.set('tool', ghdl', 'task', 'import', 'stdout', 'suffix', 'log')"],
+                     "api: task.set('tool', ghdl', 'task', 'import', 'stdout', 'suffix', 'log')"],
             help=trim("""
             Specifies the file extension for the content redirected from stdout.""")))
 
@@ -2537,7 +2538,7 @@ def schema_task(schema):
             shorthelp="Task: destination for stderr",
             switch="-tool_task_stderr_destination 'tool task <str>'",
             example=["cli: -tool_task_stderr_destination 'ghdl import log'",
-                     "api: chip.set('tool', ghdl', 'task', 'import', 'stderr', 'destination', "
+                     "api: task.set('tool', ghdl', 'task', 'import', 'stderr', 'destination', "
                      "'log')"],
             help=trim("""
             Defines where to direct the output generated over stderr.
@@ -2557,7 +2558,7 @@ def schema_task(schema):
             shorthelp="Task: file suffix for redirected stderr",
             switch="-tool_task_stderr_suffix 'tool task <str>'",
             example=["cli: -tool_task_stderr_suffix 'ghdl import log'",
-                     "api: chip.set('tool', 'ghdl', 'task', 'import', 'stderr', 'suffix', 'log')"],
+                     "api: task.set('tool', 'ghdl', 'task', 'import', 'stderr', 'suffix', 'log')"],
             help=trim("""
             Specifies the file extension for the content redirected from stderr.""")))
 
@@ -2571,7 +2572,7 @@ def schema_task(schema):
             switch="-tool_task_require 'tool task <str>'",
             example=[
                 "cli: -tool_task_require 'openroad cts design'",
-                "api: chip.set('tool', 'openroad', 'task', 'cts', 'require', 'design')"],
+                "api: task.set('tool', 'openroad', 'task', 'cts', 'require', 'design')"],
             help=trim("""
             List of keypaths to required task parameters. The list is used
             by :meth:`.check_manifest()` to verify that all parameters have been set up before
@@ -2587,7 +2588,7 @@ def schema_task(schema):
             switch="-tool_task_report 'tool task metric <file>'",
             example=[
                 "cli: -tool_task_report 'openroad place holdtns \"place 0 place.log\"'",
-                "api: chip.set('tool', 'openroad', 'task', 'place', 'report', 'holdtns', "
+                "api: task.set('tool', 'openroad', 'task', 'place', 'report', 'holdtns', "
                 "'place.log', step='place', index='0')"],
             help=trim("""
             List of report files associated with a specific 'metric'. The file path
@@ -2603,7 +2604,7 @@ def schema_task(schema):
             switch="-tool_task_refdir 'tool task <dir>'",
             example=[
                 "cli: -tool_task_refdir 'yosys syn ./myref'",
-                "api: chip.set('tool', 'yosys', 'task', 'syn_asic', 'refdir', './myref')"],
+                "api: task.set('tool', 'yosys', 'task', 'syn_asic', 'refdir', './myref')"],
             help=trim("""
             Path to directories containing reference flow scripts, specified
             on a per step and index basis.""")))
@@ -2618,7 +2619,7 @@ def schema_task(schema):
             switch="-tool_task_script 'tool task <file>'",
             example=[
                 "cli: -tool_task_script 'yosys syn syn.tcl'",
-                "api: chip.set('tool', 'yosys', 'task', 'syn_asic', 'script', 'syn.tcl')"],
+                "api: task.set('tool', 'yosys', 'task', 'syn_asic', 'script', 'syn.tcl')"],
             help=trim("""
             Path to the entry script called by the executable specified
             on a per task and per step basis.""")))
@@ -2634,7 +2635,7 @@ def schema_task(schema):
             switch="-tool_task_prescript 'tool task <file>'",
             example=[
                 "cli: -tool_task_prescript 'yosys syn syn_pre.tcl'",
-                "api: chip.set('tool', 'yosys', 'task', 'syn_asic', 'prescript', 'syn_pre.tcl')"],
+                "api: task.set('tool', 'yosys', 'task', 'syn_asic', 'prescript', 'syn_pre.tcl')"],
             help=trim("""
             Path to a user supplied script to execute after reading in the design
             but before the main execution stage of the step. Exact entry point
@@ -2653,7 +2654,7 @@ def schema_task(schema):
             switch="-tool_task_postscript 'tool task <file>'",
             example=[
                 "cli: -tool_task_postscript 'yosys syn syn_post.tcl'",
-                "api: chip.set('tool', 'yosys', 'task', 'syn_asic', 'postscript', 'syn_post.tcl')"],
+                "api: task.set('tool', 'yosys', 'task', 'syn_asic', 'postscript', 'syn_post.tcl')"],
             help=trim("""
             Path to a user supplied script to execute after the main execution
             stage of the step but before the design is saved.
@@ -2670,7 +2671,7 @@ def schema_task(schema):
             shorthelp="Task: thread parallelism",
             switch="-tool_task_threads 'tool task <int>'",
             example=["cli: -tool_task_threads 'magic drc 64'",
-                     "api: chip.set('tool', 'magic', 'task', 'drc', 'threads', '64')"],
+                     "api: task.set('tool', 'magic', 'task', 'drc', 'threads', '64')"],
             help=trim("""
             Thread parallelism to use for execution specified on a per task and per
             step basis. If not specified, SC queries the operating system and sets

@@ -90,7 +90,7 @@
     "docker-depends": "icepack"
   },
   "chisel": {
-    "version": "1.8.0",
+    "version": "1.11.6",
     "git-url": "https://github.com/sbt/sbt.git",
     "auto-update": false
   },
@@ -145,7 +145,7 @@
   },
   "yosys-slang": {
     "git-url": "https://github.com/povik/yosys-slang.git",
-    "git-commit": "c962a6e68f8cff48bf5d4d84c371eee883567803",
+    "git-commit": "ccc13eabc333a59d3a78bdb1d4a002928050e92d",
     "docker-depends": "yosys",
     "auto-update": true
   },
