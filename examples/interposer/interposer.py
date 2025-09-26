@@ -46,7 +46,7 @@ def main():
     # Explicitly define the physical dimensions of the interposer die.
     # This is a critical piece of information for the routing tool.
     # The dimensions are specified in microns (width, height).
-    project.get_areaconstituents().set_diearea_rectangle(1000, 500)
+    project.get_areaconstraints().set_diearea_rectangle(1000, 500)
 
     # --- Custom Flowgraph Creation ---
     # We will build a custom flow by combining two pre-defined flows.
